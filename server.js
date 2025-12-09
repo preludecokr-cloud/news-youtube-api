@@ -11,10 +11,9 @@ const iconv = require('iconv-lite');
 const app = express();
 
 // ============================================================
-// 환경 변수에서 설정 로드
-// Render 대시보드에서 설정: OPENAI_API_KEY
+// 환경 변수에서 설정 로드 (API 키는 이제 프론트엔드에서 받습니다)
 // ============================================================
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''; 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const PORT = process.env.PORT || 3000;
 
@@ -22,7 +21,7 @@ const PORT = process.env.PORT || 3000;
 // 미들웨어 설정
 // ============================================================
 app.use(cors({
-    origin: '*', // 프로덕션에서는 카페24 도메인으로 제한 권장
+    origin: '*', 
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -36,7 +35,7 @@ app.get('/', (req, res) => {
         status: 'ok', 
         service: 'News to YouTube Studio API',
         version: '1.0.1',
-        apiKeyConfigured: !!OPENAI_API_KEY
+        apiKeyConfigured: !!OPENAI_API_KEY 
     });
 });
 
@@ -45,11 +44,11 @@ app.get('/health', (req, res) => {
 });
 
 // ============================================================
-// OpenAI API 호출 함수
+// OpenAI API 호출 함수 (API Key를 인수로 받음)
 // ============================================================
-async function callOpenAI(systemPrompt, userPrompt, model = 'gpt-4o') {
-    if (!OPENAI_API_KEY) {
-        throw new Error('OpenAI API 키가 서버에 설정되지 않았습니다.');
+async function callOpenAI(systemPrompt, userPrompt, model = 'gpt-4o', apiKey) { 
+    if (!apiKey) {
+        throw new Error('OpenAI API 키가 설정되지 않았습니다.');
     }
     
     try {
@@ -64,7 +63,7 @@ async function callOpenAI(systemPrompt, userPrompt, model = 'gpt-4o') {
         }, {
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${OPENAI_API_KEY}`
+                'Authorization': `Bearer ${apiKey}` 
             },
             timeout: 60000 // 60초 타임아웃
         });
@@ -81,12 +80,12 @@ async function callOpenAI(systemPrompt, userPrompt, model = 'gpt-4o') {
             throw new Error('잘못된 요청입니다.');
         }
         
-        throw new Error('AI 처리 중 오류가 발생했습니다.');
+        throw new Error('AI 처리 중 오류가 발생했습니다: ' + (error.response?.data?.error?.message || error.message));
     }
 }
 
 // ============================================================
-// 네이버 뉴스 크롤링 함수 (인코딩 수정)
+// 네이버 뉴스 크롤링 함수 (카테고리별 랭킹 개선)
 // ============================================================
 async function scrapeNaverNews(category) {
     // 카테고리 코드 매핑
@@ -117,10 +116,8 @@ async function scrapeNaverNews(category) {
         // 인코딩 처리: EUC-KR 또는 UTF-8
         let html;
         try {
-            // 먼저 UTF-8로 시도
             html = response.data.toString('utf-8');
-            // UTF-8이 아닌 것 같으면 EUC-KR로 변환
-            if (html.includes('�') || html.includes('ï¿½')) {
+            if (html.includes('') || html.includes('ï¿½')) {
                 html = iconv.decode(response.data, 'euc-kr');
             }
         } catch (e) {
@@ -131,50 +128,47 @@ async function scrapeNaverNews(category) {
         const news = [];
         let rank = 1;
         
-        // 랭킹 뉴스 파싱
-        $('.rankingnews_box').each((boxIndex, box) => {
-            const pressName = $(box).find('.rankingnews_name').text().trim();
+        // 랭킹 뉴스 파싱 (카테고리별 랭킹 리스트를 명확히 타겟팅)
+        $('.rankingnews_list li').each((i, item) => {
+            if (rank > 50) return false; 
             
-            $(box).find('.rankingnews_list li').each((i, item) => {
-                if (rank > 50) return false; // 최대 50개
-                
-                const $item = $(item);
-                const $link = $item.find('a');
-                const title = $link.text().trim();
-                const link = $link.attr('href');
-                
-                if (title && link) {
-                    news.push({
-                        rank: rank++,
-                        title: title,
-                        press: pressName,
-                        time: '',
-                        link: link.startsWith('http') ? link : `https://news.naver.com${link}`,
-                        summary: title // 기본값으로 제목 사용
-                    });
-                }
-            });
+            const $item = $(item);
+            const $link = $item.find('a');
+            const title = $link.attr('title') || $link.text().trim(); 
+            const link = $link.attr('href');
+            
+            const press = $item.find('.rankingnews_name, .list_press').text().trim() || '언론사';
+            
+            if (title && title.length > 5 && link) {
+                news.push({
+                    rank: rank++,
+                    title: title.substring(0, 100),
+                    press: press.substring(0, 20),
+                    time: '', 
+                    link: link.startsWith('http') ? link : `https://news.naver.com${link}`,
+                    summary: title.substring(0, 100) 
+                });
+            }
         });
         
-        // 뉴스가 없으면 대체 방식 시도
+        // 랭킹 뉴스가 없으면 대체 방식 시도
         if (news.length === 0) {
-            // 인기 뉴스 리스트 파싱 시도
-            $('ul.commonlist li, .list_body .list_item, .ranking_list li').each((i, item) => {
+            $('.rankingnews_box .rankingnews_list li').each((i, item) => {
                 if (rank > 50) return false;
                 
                 const $item = $(item);
                 const $link = $item.find('a').first();
-                const title = $link.text().trim() || $item.find('.list_title, .title').text().trim();
+                const title = $link.attr('title') || $link.text().trim();
                 const link = $link.attr('href');
-                const press = $item.find('.press, .info_press, .writing').text().trim() || '언론사';
+                const press = $item.find('.rankingnews_name, .list_press').text().trim() || '언론사';
                 
-                if (title && title.length > 5) {
+                if (title && title.length > 5 && link) {
                     news.push({
                         rank: rank++,
                         title: title.substring(0, 100),
                         press: press.substring(0, 20),
                         time: '',
-                        link: link && link.startsWith('http') ? link : (link ? `https://news.naver.com${link}` : '#'),
+                        link: link.startsWith('http') ? link : `https://news.naver.com${link}`,
                         summary: title.substring(0, 100)
                     });
                 }
@@ -188,70 +182,9 @@ async function scrapeNaverNews(category) {
     }
 }
 
-// 기사 본문 크롤링 및 요약
+// 기사 본문 크롤링 및 요약 (서버측 AI 요약 기능 제거)
 async function getArticleSummary(articleUrl) {
-    try {
-        const response = await axios.get(articleUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept-Charset': 'utf-8'
-            },
-            responseType: 'arraybuffer',
-            timeout: 5000
-        });
-        
-        // 인코딩 처리
-        let html;
-        try {
-            html = response.data.toString('utf-8');
-            if (html.includes('�')) {
-                html = iconv.decode(response.data, 'euc-kr');
-            }
-        } catch (e) {
-            html = iconv.decode(response.data, 'euc-kr');
-        }
-        
-        const $ = cheerio.load(html);
-        
-        // 다양한 선택자로 본문 추출 시도
-        let content = '';
-        const selectors = [
-            '#dic_area',
-            '#articleBodyContents', 
-            '.article_body',
-            '#newsct_article',
-            '.news_end',
-            'article'
-        ];
-        
-        for (const selector of selectors) {
-            content = $(selector).text().trim();
-            if (content && content.length > 100) break;
-        }
-        
-        if (content && content.length > 50) {
-            // 본문이 너무 길면 앞부분만
-            content = content.substring(0, 1000);
-            
-            // AI로 요약 (API 키가 있을 경우)
-            if (OPENAI_API_KEY) {
-                const summary = await callOpenAI(
-                    '뉴스 기사를 2~3문장으로 핵심만 요약해주세요. 한국어로 작성하세요.',
-                    content,
-                    'gpt-4o-mini' // 비용 절약을 위해 mini 사용
-                );
-                return summary;
-            }
-            
-            // API 키 없으면 앞부분 반환
-            return content.substring(0, 200) + '...';
-        }
-        
-        return '요약을 가져올 수 없습니다.';
-    } catch (error) {
-        console.error('기사 요약 오류:', error.message);
-        return '요약을 가져올 수 없습니다.';
-    }
+    return '요약은 AI 작업 공간에서 직접 진행해주세요.';
 }
 
 // ============================================================
@@ -259,27 +192,9 @@ async function getArticleSummary(articleUrl) {
 // ============================================================
 app.get('/api/naver-news', async (req, res) => {
     const category = req.query.category || '정치';
-    const withSummary = req.query.summary === 'true';
     
     try {
         let news = await scrapeNaverNews(category);
-        
-        // 요약 포함 요청 시 (시간이 오래 걸릴 수 있음)
-        if (withSummary && news.length > 0) {
-            // 상위 10개만 요약 (시간 절약)
-            const summaryPromises = news.slice(0, 10).map(async (item, index) => {
-                try {
-                    item.summary = await getArticleSummary(item.link);
-                } catch {
-                    item.summary = item.title;
-                }
-                return item;
-            });
-            
-            const summarizedNews = await Promise.all(summaryPromises);
-            news = [...summarizedNews, ...news.slice(10).map(n => ({ ...n, summary: n.title }))];
-        }
-        
         res.json(news);
     } catch (error) {
         console.error('뉴스 API 오류:', error);
@@ -291,8 +206,35 @@ app.get('/api/naver-news', async (req, res) => {
 // AI 기능 엔드포인트들
 // ============================================================
 
+// 🔑 키 유효성 검사 엔드포인트
+app.post('/api/ai/check-key', async (req, res) => {
+    const apiKey = req.headers.authorization?.split(' ')[1]; 
+    const { model } = req.body;
+    
+    if (!apiKey) {
+        return res.status(400).json({ error: 'API 키가 입력되지 않았습니다.' });
+    }
+    
+    try {
+        // 가장 간단하고 저렴한 요청을 실행하여 키 유효성만 체크
+        await callOpenAI(
+            '당신은 키 검사 전문가입니다. 이 문장을 1단어로 한국어로 요약하세요.',
+            '키가 유효한지 확인해주세요.',
+            model || 'gpt-4o-mini', 
+            apiKey
+        );
+        
+        res.json({ status: 'ok', message: 'API 키가 유효합니다.' });
+    } catch (error) {
+        // callOpenAI에서 던져진 오류를 401 상태로 클라이언트에 전달
+        res.status(401).json({ error: error.message });
+    }
+});
+
+
 // 대본 재구성
 app.post('/api/ai/script-transform', async (req, res) => {
+    const apiKey = req.headers.authorization?.split(' ')[1]; // 🔑 헤더에서 키 추출
     const { text, concept, lengthOption, model } = req.body;
     
     if (!text) {
@@ -310,7 +252,7 @@ app.post('/api/ai/script-transform', async (req, res) => {
 - 핵심 내용을 명확하게 전달
 - 한국어로 작성`;
 
-        const result = await callOpenAI(systemPrompt, text, model || 'gpt-4o');
+        const result = await callOpenAI(systemPrompt, text, model || 'gpt-4o', apiKey); 
         res.json({ script: result });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -319,6 +261,7 @@ app.post('/api/ai/script-transform', async (req, res) => {
 
 // 구조 분석
 app.post('/api/ai/structure', async (req, res) => {
+    const apiKey = req.headers.authorization?.split(' ')[1]; // 🔑 헤더에서 키 추출
     const { text, model } = req.body;
     
     if (!text) {
@@ -334,7 +277,7 @@ app.post('/api/ai/structure', async (req, res) => {
 4. 강점과 보완점
 한국어로 작성해주세요.`;
 
-        const result = await callOpenAI(systemPrompt, text, model || 'gpt-4o');
+        const result = await callOpenAI(systemPrompt, text, model || 'gpt-4o', apiKey); 
         res.json({ structure: result });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -343,6 +286,7 @@ app.post('/api/ai/structure', async (req, res) => {
 
 // 핵심 요약
 app.post('/api/ai/summary', async (req, res) => {
+    const apiKey = req.headers.authorization?.split(' ')[1]; // 🔑 헤더에서 키 추출
     const { text, model } = req.body;
     
     if (!text) {
@@ -357,7 +301,7 @@ app.post('/api/ai/summary', async (req, res) => {
 - 객관적이고 명확하게 작성
 한국어로 작성해주세요.`;
 
-        const result = await callOpenAI(systemPrompt, text, model || 'gpt-4o');
+        const result = await callOpenAI(systemPrompt, text, model || 'gpt-4o', apiKey); 
         res.json({ summary: result });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -366,6 +310,7 @@ app.post('/api/ai/summary', async (req, res) => {
 
 // 새로운 대본 작성
 app.post('/api/ai/script-new', async (req, res) => {
+    const apiKey = req.headers.authorization?.split(' ')[1]; // 🔑 헤더에서 키 추출
     const { topic, concept, lengthOption, model } = req.body;
     
     if (!topic) {
@@ -383,7 +328,7 @@ app.post('/api/ai/script-new', async (req, res) => {
 - [장면 지시], [효과음], [자막] 등 표시
 한국어로 작성해주세요.`;
 
-        const result = await callOpenAI(systemPrompt, `주제: ${topic}`, model || 'gpt-4o');
+        const result = await callOpenAI(systemPrompt, `주제: ${topic}`, model || 'gpt-4o', apiKey); 
         res.json({ script: result });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -392,6 +337,7 @@ app.post('/api/ai/script-new', async (req, res) => {
 
 // 제목 생성
 app.post('/api/ai/titles', async (req, res) => {
+    const apiKey = req.headers.authorization?.split(' ')[1]; // 🔑 헤더에서 키 추출
     const { text, model } = req.body;
     
     if (!text) {
@@ -415,7 +361,7 @@ app.post('/api/ai/titles', async (req, res) => {
 반드시 아래 JSON 형식으로만 응답해주세요:
 {"safeTitles": ["제목1", "제목2", "제목3", "제목4", "제목5"], "clickbaitTitles": ["제목1", "제목2", "제목3", "제목4", "제목5"]}`;
 
-        const result = await callOpenAI(systemPrompt, text, model || 'gpt-4o');
+        const result = await callOpenAI(systemPrompt, text, model || 'gpt-4o', apiKey); 
         
         try {
             const jsonMatch = result.match(/\{[\s\S]*\}/);
@@ -426,7 +372,6 @@ app.post('/api/ai/titles', async (req, res) => {
                 res.json(JSON.parse(result));
             }
         } catch (parseError) {
-            // 파싱 실패 시 기본 구조로 응답
             res.json({
                 safeTitles: [result],
                 clickbaitTitles: [result]
@@ -439,6 +384,7 @@ app.post('/api/ai/titles', async (req, res) => {
 
 // 썸네일 카피 생성
 app.post('/api/ai/thumbnail-copies', async (req, res) => {
+    const apiKey = req.headers.authorization?.split(' ')[1]; // 🔑 헤더에서 키 추출
     const { text, lengthOption, model } = req.body;
     
     if (!text) {
@@ -457,7 +403,7 @@ app.post('/api/ai/thumbnail-copies', async (req, res) => {
 반드시 아래 JSON 형식으로만 응답해주세요:
 {"emotional": ["카피1", "카피2", "카피3", "카피4", "카피5"], "informational": ["카피1", "카피2", "카피3", "카피4", "카피5"], "visual": ["카피1", "카피2", "카피3", "카피4", "카피5"]}`;
 
-        const result = await callOpenAI(systemPrompt, text, model || 'gpt-4o');
+        const result = await callOpenAI(systemPrompt, text, model || 'gpt-4o', apiKey); 
         
         try {
             const jsonMatch = result.match(/\{[\s\S]*\}/);
@@ -493,5 +439,5 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
     console.log(`✅ News to YouTube Studio API 서버 시작`);
     console.log(`📍 포트: ${PORT}`);
-    console.log(`🔑 OpenAI API 키: ${OPENAI_API_KEY ? '설정됨' : '미설정'}`);
+    console.log(`🔑 OpenAI API 키: ${OPENAI_API_KEY ? '설정됨 (레거시)' : '미설정 (프론트엔드 입력 사용)'}`); 
 });
