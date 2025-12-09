@@ -50,8 +50,8 @@ async function callGemini(systemPrompt, userPrompt, model, apiKey) {
         ];
 
         // [방어 2] 모델명 강제 보정 (혹시 모를 오타 방지)
-        let targetModel = 'gemini-1.5-flash'; // 기본값
-        if (model.includes('pro')) targetModel = 'gemini-1.5-pro';
+        let targetModel = 'gemini-2.5-flash'; // 기본값
+        if (model.includes('pro')) targetModel = 'gemini-2.5-pro';
         
         // [방어 3] 시스템 지시문 분리 방식 제거 -> 프롬프트 통합 방식 사용 (404 에러 원천 차단)
         const generativeModel = genAI.getGenerativeModel({ 
