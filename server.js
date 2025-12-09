@@ -49,9 +49,19 @@ async function callGemini(systemPrompt, userPrompt, model, apiKey) {
             { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         ];
 
-        // [방어 2] 모델명 강제 보정 (혹시 모를 오타 방지)
-        let targetModel = 'gemini-2.5-flash'; // 기본값
-        if (model.includes('pro')) targetModel = 'gemini-2.5-pro';
+        // [방어 2] 모델명 강제 보정 (1.5 → 2.5 최신 모델 사용)
+let targetModel = 'gemini-2.5-flash'; // 기본값: Flash
+
+// model 값이 대문자/소문자 섞여 와도 안전하게 처리
+const lowerModel = (model || '').toLowerCase();
+
+if (lowerModel.includes('pro')) {
+    // Pro 계열 선택 시
+    targetModel = 'gemini-2.5-pro';
+}
+
+console.log('[Gemini] UI model:', model, '-> 사용 모델:', targetModel);
+
         
         // [방어 3] 시스템 지시문 분리 방식 제거 -> 프롬프트 통합 방식 사용 (404 에러 원천 차단)
         const generativeModel = genAI.getGenerativeModel({ 
