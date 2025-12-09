@@ -95,14 +95,14 @@ async function callGemini(systemPrompt, userPrompt, model, apiKey) {
       targetModel = 'gemini-2.5-flash';
     }
 
+    console.log('[Gemini] UI model:', model, '-> 사용 모델:', targetModel);
+
     const generativeModel = genAI.getGenerativeModel({
       model: targetModel,
       safetySettings,
     });
 
     const finalPrompt = `
-You are a helpful assistant for a Korean YouTube creator.
-
 [Role & Instructions]
 ${systemPrompt}
 
@@ -198,13 +198,12 @@ async function scrapeNaverNews(categoryOrCode) {
 
     const html = iconv.decode(response.data, 'euc-kr');
     const $ = cheerio.load(html);
-
     const news = [];
     let rank = 1;
 
     // 섹션 기사 리스트 수집 (헤드라인 + 일반 기사)
     $('.newsflash_body .type06_headline li, .newsflash_body .type06 li').each((i, el) => {
-      if (rank > 50) return false; // 최대 50개
+      if (rank > 100) return false; // 최대 100개
 
       const $item = $(el);
       const $a = $item.find('a').first();
@@ -247,7 +246,7 @@ app.get('/api/naver-news', async (req, res) => {
 });
 
 // ============================================================
-// 네이버 랭킹 뉴스 (언론사별 많이 본 뉴스)
+// 네이버 랭킹 뉴스 (언론사별 많이본 뉴스)
 // ============================================================
 async function scrapeNaverRanking() {
   const url = 'https://news.naver.com/main/ranking/popularDay.naver';
@@ -265,23 +264,25 @@ async function scrapeNaverRanking() {
     const news = [];
     let rank = 1;
 
+    // 언론사 박스별 많이본 뉴스
     $('.rankingnews_box').each((_, box) => {
       const $box = $(box);
-      const press = $box.find('.rankingnews_name').text().trim();
+      const press = $box.find('.rankingnews_name').text().trim(); // 언론사 이름
 
       $box.find('ul.rankingnews_list li').each((__, li) => {
+        if (rank > 200) return false; // 너무 많아지지 않게 최대 200개
+
         const $li = $(li);
         const $a = $li.find('a').first();
 
         const rawTitle = $a.text() || $a.attr('title') || '';
         const title = rawTitle.trim().replace(/\s+/g, ' ');
         const href = $a.attr('href');
-
         if (!title || !href) return;
 
         const link = href.startsWith('http') ? href : `https://news.naver.com${href}`;
-        const views = $li.find('.list_view').text().trim() || null;
-        const time = $li.find('.list_time').text().trim() || '';
+        const views = $li.find('.list_view').text().trim() || null;  // 많이본 수
+        const time = $li.find('.list_time').text().trim() || '';      // 시간
 
         news.push({
           rank: rank++,
@@ -290,7 +291,6 @@ async function scrapeNaverRanking() {
           press,
           views,
           time,
-          summary: title,
         });
       });
     });
@@ -311,65 +311,7 @@ app.get('/api/naver-ranking', async (req, res) => {
   }
 });
 
-// ============================================================
-// 네이버 뉴스 기사 본문 크롤링
-// ============================================================
-async function scrapeArticleBody(url) {
-  const fullUrl = url.startsWith('http') ? url : `https://news.naver.com${url}`;
 
-  try {
-    const response = await axios.get(fullUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      responseType: 'arraybuffer',
-      timeout: 10000,
-    });
-
-    const html = iconv.decode(response.data, 'euc-kr');
-    const $ = cheerio.load(html);
-
-    const title =
-      $('h2#title_area, h2.media_end_head_headline, h3#articleTitle').first().text().trim() ||
-      $('meta[property="og:title"]').attr('content') ||
-      '';
-
-    let $body = $('#dic_area').first();
-    if (!$body || !$body.length) $body = $('#newsct_article').first();
-    if (!$body || !$body.length) $body = $('#articeBody').first();
-    if (!$body || !$body.length) $body = $('#articleBodyContents').first();
-
-    let bodyHtml = '';
-    let bodyText = '';
-
-    if ($body && $body.length) {
-      $body
-        .find(
-          'script, style, iframe, .ad_related, .promotion, .media_end_copyright, #spiLayer, .cbox_news'
-        )
-        .remove();
-      bodyHtml = $body.html() || '';
-      bodyText = $body.text().replace(/\s+/g, ' ').trim();
-    }
-
-    return { title, bodyHtml, bodyText, url: fullUrl };
-  } catch (error) {
-    console.error('scrapeArticleBody error:', error.message);
-    throw new Error('기사 본문 불러오기 실패: ' + error.message);
-  }
-}
-
-app.post('/api/naver-article', async (req, res) => {
-  try {
-    const { url } = req.body || {};
-    if (!url) {
-      return res.status(400).json({ error: '기사 URL 이 필요합니다.' });
-    }
-    const data = await scrapeArticleBody(url);
-    res.json(data);
-  } catch (e) {
-    console.error('naver-article error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
 
 // ============================================================
 // AI API 엔드포인트
@@ -391,11 +333,73 @@ app.post('/api/ai/check-key', async (req, res) => {
     await callAI('System check', 'ping', model, apiKey);
     res.json({ status: 'ok', message: 'API 키 확인 완료' });
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    res.status(401).json({ error: e.message });
   }
 });
 
-// 2. 요약
+
+// 2. 기존 기사/텍스트 → 대본 재구성
+app.post('/api/ai/script-transform', async (req, res) => {
+  try {
+    const { text, concept, lengthOption, model } = req.body || {};
+    const apiKey = getApiKeyFromHeader(req);
+
+    if (!text) {
+      return res.status(400).json({ error: '재구성할 텍스트를 입력해주세요.' });
+    }
+
+    let finalConcept = concept;
+    if (!finalConcept || finalConcept === 'custom') finalConcept = '기본';
+
+    const system = `
+당신은 유능한 유튜브 대본 작가입니다.
+다음 조건에 맞춰 자연스러운 한국어 유튜브 내레이션 대본으로 재구성하세요.
+
+- 콘셉트: ${finalConcept || '기본'}
+- 분량: ${lengthOption || '기본'}
+- 대상: 일반 시청자
+- 스타일: 말하듯이, 흥미를 유도하면서도 정보는 정확하게
+`;
+
+    const script = await callAI(system, text, model, apiKey);
+    res.json({ script });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 3. 구조 분석
+app.post('/api/ai/structure', async (req, res) => {
+  try {
+    const { text, model } = req.body || {};
+    const apiKey = getApiKeyFromHeader(req);
+
+    if (!text) {
+      return res.status(400).json({ error: '분석할 텍스트를 입력해주세요.' });
+    }
+
+    const system = `
+당신은 텍스트 구조 분석 전문가입니다.
+입력된 텍스트를 다음 항목으로 분석해 주세요.
+
+- Hook / 도입
+- 문제 제기
+- 핵심 정보 / 스토리 전개
+- 클라이맥스 / 반전
+- 결론 / 마무리
+- 콜투액션(구독/좋아요/댓글 유도 등)
+
+각 항목을 제목 + 간단 설명 형식으로, 한국어로 출력하세요.
+`;
+
+    const structure = await callAI(system, text, model, apiKey);
+    res.json({ structure });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 4. 요약
 app.post('/api/ai/summary', async (req, res) => {
   try {
     const { text, model } = req.body || {};
@@ -412,57 +416,6 @@ app.post('/api/ai/summary', async (req, res) => {
 
     const summary = await callAI(system, text, model, apiKey);
     res.json({ summary });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// 3. 콘텐츠 변환 (요약 → 유튜브용 스크립트 등)
-app.post('/api/ai/transform', async (req, res) => {
-  try {
-    const { text, transformType, tone, extraInstruction, model } = req.body || {};
-    const apiKey = getApiKeyFromHeader(req);
-
-    if (!text) {
-      return res.status(400).json({ error: '변환할 텍스트를 입력해주세요.' });
-    }
-
-    const system = `
-당신은 유튜브 콘텐츠를 기획/편집하는 전문가입니다.
-입력된 텍스트(뉴스 요약, 기사 등)를 아래 옵션에 맞게 유튜브용 스크립트로 변환하세요.
-
-- 변환 타입: ${transformType || 'yt-long'}
-- 톤 & 스타일: ${tone || 'neutral'}
-- 추가 지시사항: ${extraInstruction || '없음'}
-`;
-
-    const script = await callAI(system, text, model, apiKey);
-    res.json({ script });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// 4. 기존 대본 구조 분석
-app.post('/api/ai/structure', async (req, res) => {
-  try {
-    const { text, depth, element, model } = req.body || {};
-    const apiKey = getApiKeyFromHeader(req);
-
-    if (!text) {
-      return res.status(400).json({ error: '분석할 대본을 입력해주세요.' });
-    }
-
-    const system = `
-당신은 유튜브 영상 시나리오 구조를 분석하는 전문가입니다.
-주어진 스크립트를 아래 기준에 맞춰 분석하고, 한국어로 결과를 작성하세요.
-
-- 분석 깊이: ${depth || 'basic'}  (basic/detailed/timeline)
-- 중점 요소: ${element || 'hooks'} (hooks/conflicts/info)
-`;
-
-    const analysis = await callAI(system, text, model, apiKey);
-    res.json({ analysis });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -507,19 +460,17 @@ app.post('/api/ai/titles', async (req, res) => {
     }
 
     const system = `
-당신은 유튜브 영상 제목과 썸네일 문구를 기획하는 전문가입니다.
-입력된 내용을 기반으로, 클릭률(CTR)을 높일 수 있는 다양한 스타일의 제목과 썸네일용 짧은 카피를 생성하세요.
+당신은 유튜브 제목 카피라이팅 전문가입니다.
 
-아래 JSON 형식으로만 응답하세요. 모든 텍스트는 한국어로 작성합니다.
+아래 JSON 형식으로만 응답하세요. 한국어로 작성합니다.
 {
-  "titles": ["제목1", "제목2", ...],
-  "clickbaitTitles": ["썸네일용 짧은 문구1", "썸네일용 짧은 문구2", ...]
+  "safeTitles": ["제목1", "제목2", ...],
+  "clickbaitTitles": ["제목1", "제목2", ...]
 }
 `;
 
     let result = await callAI(system, text, model, apiKey);
     result = result.replace(/```json/gi, '').replace(/```/g, '').trim();
-
     const jsonMatch = result.match(/\{[\s\S]*\}/);
     const jsonText = jsonMatch ? jsonMatch[0] : result;
 
@@ -527,38 +478,35 @@ app.post('/api/ai/titles', async (req, res) => {
     try {
       parsed = JSON.parse(jsonText);
     } catch (err) {
-      console.error('Title JSON parse error:', err, result);
+      console.error('Titles JSON parse error:', err, result);
       return res.json({
-        titles: [],
+        safeTitles: ['AI 응답 오류: 다시 시도해주세요'],
         clickbaitTitles: [],
       });
     }
 
     res.json(parsed);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('Titles endpoint error:', e);
+    res.json({
+      safeTitles: ['AI 응답 오류: 다시 시도해주세요'],
+      clickbaitTitles: [],
+    });
   }
 });
 
-// 7. 썸네일 카피 + 이미지 프롬프트
-app.post('/api/ai/thumbnails', async (req, res) => {
+// 7. 썸네일 카피 (JSON 반환)
+app.post('/api/ai/thumbnail-copies', async (req, res) => {
   try {
     const { text, model } = req.body || {};
     const apiKey = getApiKeyFromHeader(req);
 
     if (!text) {
-      return res.status(400).json({ error: '썸네일을 만들 기반 텍스트를 입력해주세요.' });
+      return res.status(400).json({ error: '썸네일 카피를 만들 텍스트를 입력해주세요.' });
     }
 
     const system = `
-당신은 유튜브 썸네일 카피와 이미지 콘셉트를 동시에 기획하는 전문가입니다.
-입력된 내용을 바탕으로 다음 세 가지 유형의 카피를 생성하세요.
-
-1) emotional: 감정 자극형 (공포, 분노, 호기심, 놀라움 등 강한 감정 유발)
-2) informational: 정보 전달형 (핵심 키워드 위주, 쉽게 이해되는 문구)
-3) visual: 이미지 상상 자극형 (화면에 어떤 장면이 나오면 좋을지 상상되게 만드는 문구)
-
-각 배열에는 3~5개 내외의 카피를 담으세요.
+당신은 유튜브 썸네일 카피라이팅 전문가입니다.
 
 아래 JSON 형식으로만 응답하세요. 모든 카피는 한국어로 작성합니다.
 {
