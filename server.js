@@ -1,17 +1,18 @@
 // server.js
-// News to YouTube Studio - Backend Server (Railway 배포용)
+// News to YouTube Studio - Backend Server (Render 배포용)
 // Node.js + Express 기반, OpenAI API 연동
 
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const iconv = require('iconv-lite');
 
 const app = express();
 
 // ============================================================
 // 환경 변수에서 설정 로드
-// Railway 대시보드에서 설정: OPENAI_API_KEY
+// Render 대시보드에서 설정: OPENAI_API_KEY
 // ============================================================
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
@@ -34,7 +35,7 @@ app.get('/', (req, res) => {
     res.json({ 
         status: 'ok', 
         service: 'News to YouTube Studio API',
-        version: '1.0.0',
+        version: '1.0.1',
         apiKeyConfigured: !!OPENAI_API_KEY
     });
 });
@@ -85,7 +86,7 @@ async function callOpenAI(systemPrompt, userPrompt, model = 'gpt-4o') {
 }
 
 // ============================================================
-// 네이버 뉴스 크롤링 함수
+// 네이버 뉴스 크롤링 함수 (인코딩 수정)
 // ============================================================
 async function scrapeNaverNews(category) {
     // 카테고리 코드 매핑
@@ -106,12 +107,27 @@ async function scrapeNaverNews(category) {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Accept-Charset': 'utf-8'
             },
+            responseType: 'arraybuffer',
             timeout: 10000
         });
         
-        const $ = cheerio.load(response.data);
+        // 인코딩 처리: EUC-KR 또는 UTF-8
+        let html;
+        try {
+            // 먼저 UTF-8로 시도
+            html = response.data.toString('utf-8');
+            // UTF-8이 아닌 것 같으면 EUC-KR로 변환
+            if (html.includes('�') || html.includes('ï¿½')) {
+                html = iconv.decode(response.data, 'euc-kr');
+            }
+        } catch (e) {
+            html = iconv.decode(response.data, 'euc-kr');
+        }
+        
+        const $ = cheerio.load(html);
         const news = [];
         let rank = 1;
         
@@ -134,7 +150,7 @@ async function scrapeNaverNews(category) {
                         press: pressName,
                         time: '',
                         link: link.startsWith('http') ? link : `https://news.naver.com${link}`,
-                        summary: '' // 나중에 AI로 요약
+                        summary: title // 기본값으로 제목 사용
                     });
                 }
             });
@@ -159,7 +175,7 @@ async function scrapeNaverNews(category) {
                         press: press.substring(0, 20),
                         time: '',
                         link: link && link.startsWith('http') ? link : (link ? `https://news.naver.com${link}` : '#'),
-                        summary: ''
+                        summary: title.substring(0, 100)
                     });
                 }
             });
@@ -177,12 +193,25 @@ async function getArticleSummary(articleUrl) {
     try {
         const response = await axios.get(articleUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept-Charset': 'utf-8'
             },
+            responseType: 'arraybuffer',
             timeout: 5000
         });
         
-        const $ = cheerio.load(response.data);
+        // 인코딩 처리
+        let html;
+        try {
+            html = response.data.toString('utf-8');
+            if (html.includes('�')) {
+                html = iconv.decode(response.data, 'euc-kr');
+            }
+        } catch (e) {
+            html = iconv.decode(response.data, 'euc-kr');
+        }
+        
+        const $ = cheerio.load(html);
         
         // 다양한 선택자로 본문 추출 시도
         let content = '';
@@ -249,9 +278,6 @@ app.get('/api/naver-news', async (req, res) => {
             
             const summarizedNews = await Promise.all(summaryPromises);
             news = [...summarizedNews, ...news.slice(10).map(n => ({ ...n, summary: n.title }))];
-        } else {
-            // 요약 없이 제목을 요약으로 사용
-            news = news.map(n => ({ ...n, summary: n.title }));
         }
         
         res.json(news);
