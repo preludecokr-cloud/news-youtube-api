@@ -5,7 +5,7 @@
 // ============================================================
 // ⚠️ 중요: Render 배포 후 아래 URL을 실제 URL로 변경하세요!
 // ============================================================
-const API_BASE_URL = 'https://news-youtube-api.onrender.com'; // ← Render URL로 변경 필요!
+const API_BASE_URL = 'https://news-youtube-api-1.onrender.com'; // ← Render URL로 변경 필요!
 
 // ============================================================
 // 설정 및 전역 변수
