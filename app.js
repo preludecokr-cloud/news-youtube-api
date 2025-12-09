@@ -1,18 +1,18 @@
 // app.js
 // News to YouTube Studio - Frontend (카페24 호스팅용)
-// Railway 백엔드 API와 연동
+// Render 백엔드 API와 연동 (Gemini/OpenAI 통합)
 
 // ============================================================
-// ⚠️ 중요: Render 배포 후 아래 URL을 실제 URL로 변경하세요!
+// ✅ 사장님의 Render 서버 주소로 업데이트 완료
 // ============================================================
-const API_BASE_URL = 'https://news-youtube-api-1.onrender.com'; // ← Render URL로 변경 필요!
+const API_BASE_URL = 'https://news-youtube-api-1.onrender.com';
 
 // ============================================================
 // 설정 및 전역 변수
 // ============================================================
 const STORAGE_KEYS = {
     model: 'nts_model',
-    apiKey: 'nts_apiKey', // 🔑 추가
+    apiKey: 'nts_apiKey',
     mergedSummary: 'nts_mergedSummary',
     scriptInput: 'nts_scriptInput',
     transformResult: 'nts_transformResult',
@@ -33,10 +33,10 @@ let newsData = [];
 const elements = {
     // 설정
     modelSelect: document.getElementById('modelSelect'),
-    apiKeyInput: document.getElementById('apiKeyInput'), // 🔑 추가
+    apiKeyInput: document.getElementById('apiKeyInput'),
     apiStatus: document.getElementById('apiStatus'),
-    checkApiKeyBtn: document.getElementById('checkApiKeyBtn'), // 🔑 추가
-    keyStatusIndicator: document.getElementById('keyStatusIndicator'), // 🔑 추가
+    checkApiKeyBtn: document.getElementById('checkApiKeyBtn'),
+    keyStatusIndicator: document.getElementById('keyStatusIndicator'),
     
     // 뉴스 섹션
     categorySelect: document.getElementById('categorySelect'),
@@ -159,7 +159,6 @@ function restoreFromLocalStorage() {
             elements.modelSelect.value = savedModel;
         }
         
-        // 🔑 API Key 복원 로직 추가
         const savedApiKey = getFromLocalStorage(STORAGE_KEYS.apiKey);
         if (savedApiKey) {
             elements.apiKeyInput.value = savedApiKey;
@@ -231,18 +230,18 @@ async function checkServerConnection() {
 }
 
 async function apiRequest(endpoint, method = 'GET', body = null) {
-    const apiKey = elements.apiKeyInput.value.trim(); // 🔑 입력된 API 키 가져오기
+    const apiKey = elements.apiKeyInput.value.trim(); 
     
-    // AI 관련 엔드포인트 호출 시 키 유효성 검사
+    // AI 관련 기능일 때만 키 체크
     if (endpoint.startsWith('/api/ai/') && !apiKey) { 
-         throw new Error('OpenAI API 키를 입력해주세요.'); 
+         throw new Error('API 키를 입력해주세요.'); 
     }
     
     const options = {
         method,
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}` // 🔑 Authorization 헤더에 포함
+            'Authorization': `Bearer ${apiKey}` 
         }
     };
     
@@ -255,22 +254,23 @@ async function apiRequest(endpoint, method = 'GET', body = null) {
         const data = await response.json();
         
         if (!response.ok) {
-            // 서버에서 명시적으로 오류 메시지를 반환한 경우
-            throw new Error(data.error || `API 오류 (${response.status}): ${data.message || '알 수 없는 오류'}`);
+            throw new Error(data.error || `오류: ${data.message || '서버 응답 에러'}`);
         }
         
         return data;
     } catch (error) {
         if (error.name === 'TypeError') {
-            throw new Error('서버에 연결할 수 없습니다. 네트워크를 확인해주세요.');
+            throw new Error('서버 접속 불가. 네트워크를 확인하세요.');
         }
         throw error;
     }
 }
 
-// 🔑 키 유효성 검사 함수
+// 🔑 키 유효성 검사 함수 (Gemini/OpenAI 분기 지원)
 async function checkApiKeyValidity() {
     const apiKey = elements.apiKeyInput.value.trim();
+    // [중요] 사용자가 선택한 모델을 가져옵니다 (Gemini vs GPT)
+    const currentModel = elements.modelSelect.value;
     
     if (!apiKey) {
         showError('API 키를 먼저 입력해주세요.');
@@ -282,23 +282,23 @@ async function checkApiKeyValidity() {
     elements.checkApiKeyBtn.disabled = true;
     
     try {
-        // 백엔드의 새로운 키 체크 엔드포인트 호출 (가장 저렴한 모델 사용)
-        await apiRequest('/api/ai/check-key', 'POST', { model: 'gpt-4o-mini' });
+        // 백엔드에 현재 모델 정보를 함께 보냅니다.
+        await apiRequest('/api/ai/check-key', 'POST', { model: currentModel });
         
         elements.keyStatusIndicator.textContent = '✅ 키 유효함!';
         elements.keyStatusIndicator.classList.add('connected');
-        showToast('API 키가 유효합니다.');
+        showToast('API 키가 확인되었습니다.');
         return true;
         
     } catch (error) {
         let message = error.message;
         
-        if (message.includes('유효하지 않습니다')) {
-            message = '❌ 유효하지 않은 키입니다. (401 오류)';
-        } else if (message.includes('API 키를 입력해주세요')) {
-             message = '❌ 키를 입력해주세요.';
-        } else {
-             message = `❌ 서버 오류: ${message.substring(0, 30)}...`;
+        if (message.includes('401')) {
+            message = '❌ 키가 틀렸거나 만료되었습니다.';
+        } else if (message.includes('OpenAI')) {
+            message = '❌ OpenAI 키 오류입니다.';
+        } else if (message.includes('Gemini') || message.includes('Google')) {
+            message = '❌ Google Gemini 키 오류입니다.';
         }
         
         elements.keyStatusIndicator.textContent = message;
@@ -324,7 +324,6 @@ async function loadNews() {
     elements.loadNewsBtn.disabled = true;
     
     try {
-        // AI 요약 기능은 서버에서 제거되었으므로, 뉴스 목록만 요청
         newsData = await apiRequest(`/api/naver-news?category=${encodeURIComponent(category)}`);
         renderNewsList(newsData);
     } catch (error) {
@@ -398,151 +397,89 @@ function mergeSelectedSummaries() {
 }
 
 // ============================================================
-// AI 기능 함수들
+// AI 기능 함수들 (모든 함수가 modelSelect 값을 자동으로 사용)
 // ============================================================
 
 async function runScriptTransform() {
     const text = elements.scriptInput.value.trim();
-    
-    if (!text) {
-        showError('재구성할 텍스트를 입력해주세요.');
-        return;
-    }
+    if (!text) { showError('재구성할 텍스트를 입력해주세요.'); return; }
     
     let concept = elements.conceptSelect.value;
-    if (concept === 'custom') {
-        concept = elements.customConcept.value.trim() || '일반';
-    }
-    const lengthOption = elements.lengthSelect.value;
-    const model = elements.modelSelect.value;
+    if (concept === 'custom') concept = elements.customConcept.value.trim() || '일반';
     
     toggleLoading(elements.transformLoading, true);
     elements.transformBtn.disabled = true;
     
     try {
         const data = await apiRequest('/api/ai/script-transform', 'POST', {
-            text,
-            concept,
-            lengthOption,
-            model
+            text, concept, lengthOption: elements.lengthSelect.value, model: elements.modelSelect.value
         });
-        
         elements.transformResult.value = data.script;
         saveToLocalStorage(STORAGE_KEYS.transformResult, data.script);
-    } catch (error) {
-        showError(error.message);
-    } finally {
-        toggleLoading(elements.transformLoading, false);
-        elements.transformBtn.disabled = false;
-    }
+    } catch (error) { showError(error.message); } 
+    finally { toggleLoading(elements.transformLoading, false); elements.transformBtn.disabled = false; }
 }
 
 async function runStructureAnalysis() {
     const text = elements.analysisInput.value.trim();
-    
-    if (!text) {
-        showError('분석할 텍스트를 입력해주세요.');
-        return;
-    }
-    
-    const model = elements.modelSelect.value;
+    if (!text) { showError('분석할 텍스트를 입력해주세요.'); return; }
     
     toggleLoading(elements.analysisLoading, true);
     elements.structureBtn.disabled = true;
     
     try {
-        const data = await apiRequest('/api/ai/structure', 'POST', { text, model });
+        const data = await apiRequest('/api/ai/structure', 'POST', { text, model: elements.modelSelect.value });
         elements.structureResult.value = data.structure;
         saveToLocalStorage(STORAGE_KEYS.structureResult, data.structure);
-    } catch (error) {
-        showError(error.message);
-    } finally {
-        toggleLoading(elements.analysisLoading, false);
-        elements.structureBtn.disabled = false;
-    }
+    } catch (error) { showError(error.message); } 
+    finally { toggleLoading(elements.analysisLoading, false); elements.structureBtn.disabled = false; }
 }
 
 async function runSummary() {
     const text = elements.analysisInput.value.trim();
-    
-    if (!text) {
-        showError('요약할 텍스트를 입력해주세요.');
-        return;
-    }
-    
-    const model = elements.modelSelect.value;
+    if (!text) { showError('요약할 텍스트를 입력해주세요.'); return; }
     
     toggleLoading(elements.analysisLoading, true);
     elements.summaryBtn.disabled = true;
     
     try {
-        const data = await apiRequest('/api/ai/summary', 'POST', { text, model });
+        const data = await apiRequest('/api/ai/summary', 'POST', { text, model: elements.modelSelect.value });
         elements.summaryResult.value = data.summary;
         saveToLocalStorage(STORAGE_KEYS.summaryResult, data.summary);
-    } catch (error) {
-        showError(error.message);
-    } finally {
-        toggleLoading(elements.analysisLoading, false);
-        elements.summaryBtn.disabled = false;
-    }
+    } catch (error) { showError(error.message); } 
+    finally { toggleLoading(elements.analysisLoading, false); elements.summaryBtn.disabled = false; }
 }
 
 async function runNewScript() {
     const topic = elements.topicInput.value.trim();
-    
-    if (!topic) {
-        showError('주제/키워드를 입력해주세요.');
-        return;
-    }
-    
-    const concept = elements.newConceptSelect.value;
-    const lengthOption = elements.newLengthSelect.value;
-    const model = elements.modelSelect.value;
+    if (!topic) { showError('주제/키워드를 입력해주세요.'); return; }
     
     toggleLoading(elements.newScriptLoading, true);
     elements.newScriptBtn.disabled = true;
     
     try {
         const data = await apiRequest('/api/ai/script-new', 'POST', {
-            topic,
-            concept,
-            lengthOption,
-            model
+            topic, concept: elements.newConceptSelect.value, lengthOption: elements.newLengthSelect.value, model: elements.modelSelect.value
         });
-        
         elements.newScriptResult.value = data.script;
         saveToLocalStorage(STORAGE_KEYS.newScriptResult, data.script);
-    } catch (error) {
-        showError(error.message);
-    } finally {
-        toggleLoading(elements.newScriptLoading, false);
-        elements.newScriptBtn.disabled = false;
-    }
+    } catch (error) { showError(error.message); } 
+    finally { toggleLoading(elements.newScriptLoading, false); elements.newScriptBtn.disabled = false; }
 }
 
 async function runTitleGeneration() {
     const text = elements.titleInput.value.trim();
-    
-    if (!text) {
-        showError('제목 생성 기준 텍스트를 입력해주세요.');
-        return;
-    }
-    
-    const model = elements.modelSelect.value;
+    if (!text) { showError('텍스트를 입력해주세요.'); return; }
     
     toggleLoading(elements.titleLoading, true);
     elements.titleBtn.disabled = true;
     
     try {
-        const data = await apiRequest('/api/ai/titles', 'POST', { text, model });
+        const data = await apiRequest('/api/ai/titles', 'POST', { text, model: elements.modelSelect.value });
         renderTitles(data.safeTitles || [], elements.safeTitlesList);
         renderTitles(data.clickbaitTitles || [], elements.clickbaitTitlesList);
-    } catch (error) {
-        showError(error.message);
-    } finally {
-        toggleLoading(elements.titleLoading, false);
-        elements.titleBtn.disabled = false;
-    }
+    } catch (error) { showError(error.message); } 
+    finally { toggleLoading(elements.titleLoading, false); elements.titleBtn.disabled = false; }
 }
 
 function renderTitles(titles, container) {
@@ -550,7 +487,6 @@ function renderTitles(titles, container) {
         container.innerHTML = '<li><span class="title-text">결과가 없습니다.</span></li>';
         return;
     }
-    
     container.innerHTML = titles.map(title => `
         <li>
             <span class="title-text">${escapeHtml(title)}</span>
@@ -561,39 +497,25 @@ function renderTitles(titles, container) {
 
 async function runThumbnailCopyGeneration() {
     const text = elements.thumbnailInput.value.trim();
-    
-    if (!text) {
-        showError('썸네일 카피 생성 기준 텍스트를 입력해주세요.');
-        return;
-    }
-    
-    const lengthOption = elements.copyLengthSelect.value;
-    const model = elements.modelSelect.value;
+    if (!text) { showError('텍스트를 입력해주세요.'); return; }
     
     toggleLoading(elements.thumbnailLoading, true);
     elements.thumbnailBtn.disabled = true;
     
     try {
         const data = await apiRequest('/api/ai/thumbnail-copies', 'POST', {
-            text,
-            lengthOption,
-            model
+            text, lengthOption: elements.copyLengthSelect.value, model: elements.modelSelect.value
         });
         
         renderCopies(data.emotional || [], elements.emotionalList);
         renderCopies(data.informational || [], elements.informationalList);
         renderCopies(data.visual || [], elements.visualList);
         
-        // 전체 복사용 데이터 저장
         elements.emotionalList.dataset.copies = JSON.stringify(data.emotional || []);
         elements.informationalList.dataset.copies = JSON.stringify(data.informational || []);
         elements.visualList.dataset.copies = JSON.stringify(data.visual || []);
-    } catch (error) {
-        showError(error.message);
-    } finally {
-        toggleLoading(elements.thumbnailLoading, false);
-        elements.thumbnailBtn.disabled = false;
-    }
+    } catch (error) { showError(error.message); } 
+    finally { toggleLoading(elements.thumbnailLoading, false); elements.thumbnailBtn.disabled = false; }
 }
 
 function renderCopies(copies, container) {
@@ -601,7 +523,6 @@ function renderCopies(copies, container) {
         container.innerHTML = '<li><span class="copy-text">결과가 없습니다.</span></li>';
         return;
     }
-    
     container.innerHTML = copies.map(copy => `
         <li>
             <span class="copy-text">${escapeHtml(copy)}</span>
@@ -611,7 +532,7 @@ function renderCopies(copies, container) {
 }
 
 // ============================================================
-// 탭 전환 함수
+// 탭 전환 및 이벤트 리스너
 // ============================================================
 
 function initTabs() {
@@ -622,7 +543,6 @@ function initTabs() {
         btn.addEventListener('click', () => {
             tabBtns.forEach(b => b.classList.remove('active'));
             tabPanels.forEach(p => p.classList.remove('active'));
-            
             btn.classList.add('active');
             const tabId = btn.dataset.tab;
             document.getElementById(tabId).classList.add('active');
@@ -630,34 +550,23 @@ function initTabs() {
     });
 }
 
-// ============================================================
-// 이벤트 리스너 설정
-// ============================================================
-
 function initEventListeners() {
-    // 모델 선택 저장
     elements.modelSelect.addEventListener('change', () => {
         saveToLocalStorage(STORAGE_KEYS.model, elements.modelSelect.value);
     });
     
-    // 🔑 API Key 입력 시 저장 (키 입력 시 바로 로컬스토리지에 저장되도록 수정)
     elements.apiKeyInput.addEventListener('input', () => {
         saveToLocalStorage(STORAGE_KEYS.apiKey, elements.apiKeyInput.value.trim());
     });
     
-    // 🔑 키 유효성 검사 버튼
     elements.checkApiKeyBtn.addEventListener('click', checkApiKeyValidity);
     
-    // 뉴스 섹션
     elements.loadNewsBtn.addEventListener('click', loadNews);
     elements.selectAllBtn.addEventListener('click', selectAllNews);
     elements.deselectAllBtn.addEventListener('click', deselectAllNews);
     elements.mergeSelectedBtn.addEventListener('click', mergeSelectedSummaries);
-    elements.copySummaryBtn.addEventListener('click', () => {
-        copyToClipboard(elements.mergedSummary.value);
-    });
+    elements.copySummaryBtn.addEventListener('click', () => { copyToClipboard(elements.mergedSummary.value); });
     
-    // 탭 1: 대본 재구성
     elements.conceptSelect.addEventListener('change', () => {
         if (elements.conceptSelect.value === 'custom') {
             elements.customConcept.classList.remove('hidden');
@@ -665,56 +574,40 @@ function initEventListeners() {
             elements.customConcept.classList.add('hidden');
         }
     });
-    elements.transformBtn.addEventListener('click', runScriptTransform);
-    elements.copyTransformBtn.addEventListener('click', () => {
-        copyToClipboard(elements.transformResult.value);
-    });
     
-    // 탭 2: 구조 분석
+    elements.transformBtn.addEventListener('click', runScriptTransform);
+    elements.copyTransformBtn.addEventListener('click', () => { copyToClipboard(elements.transformResult.value); });
+    
     elements.structureBtn.addEventListener('click', runStructureAnalysis);
     elements.summaryBtn.addEventListener('click', runSummary);
-    elements.copyStructureBtn.addEventListener('click', () => {
-        copyToClipboard(elements.structureResult.value);
-    });
-    elements.copySummaryResultBtn.addEventListener('click', () => {
-        copyToClipboard(elements.summaryResult.value);
-    });
+    elements.copyStructureBtn.addEventListener('click', () => { copyToClipboard(elements.structureResult.value); });
+    elements.copySummaryResultBtn.addEventListener('click', () => { copyToClipboard(elements.summaryResult.value); });
     
-    // 탭 3: 새 대본
     elements.newScriptBtn.addEventListener('click', runNewScript);
-    elements.copyNewScriptBtn.addEventListener('click', () => {
-        copyToClipboard(elements.newScriptResult.value);
-    });
+    elements.copyNewScriptBtn.addEventListener('click', () => { copyToClipboard(elements.newScriptResult.value); });
     
-    // 탭 4: 제목 생성
     elements.titleBtn.addEventListener('click', runTitleGeneration);
     elements.copySafeTitlesBtn.addEventListener('click', () => {
-        const titles = Array.from(elements.safeTitlesList.querySelectorAll('.title-text'))
-            .map(el => el.textContent).join('\n');
+        const titles = Array.from(elements.safeTitlesList.querySelectorAll('.title-text')).map(el => el.textContent).join('\n');
         copyToClipboard(titles);
     });
     elements.copyClickbaitTitlesBtn.addEventListener('click', () => {
-        const titles = Array.from(elements.clickbaitTitlesList.querySelectorAll('.title-text'))
-            .map(el => el.textContent).join('\n');
+        const titles = Array.from(elements.clickbaitTitlesList.querySelectorAll('.title-text')).map(el => el.textContent).join('\n');
         copyToClipboard(titles);
     });
     
-    // 탭 5: 썸네일 카피
     elements.thumbnailBtn.addEventListener('click', runThumbnailCopyGeneration);
     document.querySelector('.copy-emotional').addEventListener('click', () => {
-        const copies = JSON.parse(elements.emotionalList.dataset.copies || '[]');
-        copyToClipboard(copies.join('\n'));
+        const copies = JSON.parse(elements.emotionalList.dataset.copies || '[]'); copyToClipboard(copies.join('\n'));
     });
     document.querySelector('.copy-informational').addEventListener('click', () => {
-        const copies = JSON.parse(elements.informationalList.dataset.copies || '[]');
-        copyToClipboard(copies.join('\n'));
+        const copies = JSON.parse(elements.informationalList.dataset.copies || '[]'); copyToClipboard(copies.join('\n'));
     });
     document.querySelector('.copy-visual').addEventListener('click', () => {
-        const copies = JSON.parse(elements.visualList.dataset.copies || '[]');
-        copyToClipboard(copies.join('\n'));
+        const copies = JSON.parse(elements.visualList.dataset.copies || '[]'); copyToClipboard(copies.join('\n'));
     });
     
-    // textarea 자동 저장
+    // 자동 저장 리스너들
     const textareaToStorage = [
         { el: elements.mergedSummary, key: STORAGE_KEYS.mergedSummary },
         { el: elements.scriptInput, key: STORAGE_KEYS.scriptInput },
@@ -728,28 +621,19 @@ function initEventListeners() {
     ];
     
     textareaToStorage.forEach(({ el, key }) => {
-        if (el) {
-            el.addEventListener('input', () => {
-                saveToLocalStorage(key, el.value);
-            });
-        }
+        if (el) el.addEventListener('input', () => saveToLocalStorage(key, el.value));
     });
     
-    elements.topicInput.addEventListener('input', () => {
-        saveToLocalStorage(STORAGE_KEYS.topicInput, elements.topicInput.value);
-    });
+    elements.topicInput.addEventListener('input', () => { saveToLocalStorage(STORAGE_KEYS.topicInput, elements.topicInput.value); });
 }
 
 // ============================================================
 // 초기화
 // ============================================================
-
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
     initEventListeners();
     restoreFromLocalStorage();
     checkServerConnection();
-    
     console.log('✅ News to YouTube Studio 초기화 완료');
-    console.log('📡 API 서버:', API_BASE_URL);
 });
