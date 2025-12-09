@@ -1,13 +1,12 @@
 // server.js
 // News to YouTube Studio - Backend Server (Render 배포용)
-// Gemini Safety Filter 해제 버전
+// Gemini 호환성 강화 버전 (시스템 프롬프트 통합)
 
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const iconv = require('iconv-lite');
-// 구글 라이브러리 및 안전 설정 상수 추가
 const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require("@google/generative-ai");
 
 const app = express();
@@ -39,7 +38,7 @@ async function callGemini(systemPrompt, userPrompt, model, apiKey) {
     try {
         const genAI = new GoogleGenerativeAI(apiKey);
         
-        // [중요] 안전 필터 강제 해제 (이게 없으면 자주 에러남)
+        // 안전 필터 해제
         const safetySettings = [
             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
             { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -47,39 +46,51 @@ async function callGemini(systemPrompt, userPrompt, model, apiKey) {
             { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
         ];
 
+        // [수정 핵심] systemInstruction 속성을 제거하고, 프롬프트에 직접 합칩니다.
+        // 이렇게 하면 "모델을 찾을 수 없음" 에러가 해결됩니다.
         const generativeModel = genAI.getGenerativeModel({ 
-            model: model, 
-            safetySettings: safetySettings,
-            systemInstruction: systemPrompt // 최신 버전용 시스템 프롬프트 설정
+            model: model, // 예: gemini-1.5-flash
+            safetySettings: safetySettings
         });
 
-        const result = await generativeModel.generateContent(userPrompt);
+        // 시스템 프롬프트를 유저 질문 앞단에 붙여서 전송 (가장 안전한 방법)
+        const finalPrompt = `[System Instructions]\n${systemPrompt}\n\n[User Request]\n${userPrompt}`;
+
+        const result = await generativeModel.generateContent(finalPrompt);
         const response = result.response;
         return response.text();
     } catch (error) {
-        // 에러 내용을 구체적으로 반환
+        console.error("Gemini Error Details:", error); // Render 로그 확인용
         throw new Error(`Gemini 상세 오류: ${error.message}`);
     }
 }
 
 async function callAI(systemPrompt, userPrompt, model, apiKey) {
     if (!apiKey) throw new Error('API 키가 없습니다.');
-    
-    // 키 공백 제거 (사용자가 복사할 때 공백이 들어가는 경우 방지)
     const cleanKey = apiKey.trim();
+    
+    // 모델명 로그 출력 (디버깅용)
+    console.log(`[AI Request] Model: ${model}`);
 
     if (model.toLowerCase().includes('gpt')) {
         return await callOpenAI(systemPrompt, userPrompt, model, cleanKey);
     } else if (model.toLowerCase().includes('gemini')) {
-        return await callGemini(systemPrompt, userPrompt, model, cleanKey);
+        // 혹시 모를 모델명 오타 방지 (강제 매핑)
+        let targetModel = model;
+        if (model.includes('flash')) targetModel = 'gemini-1.5-flash';
+        else if (model.includes('pro')) targetModel = 'gemini-1.5-pro';
+        
+        return await callGemini(systemPrompt, userPrompt, targetModel, cleanKey);
     } else {
         throw new Error('지원하지 않는 AI 모델입니다.');
     }
 }
 
-// ... (헬스체크 및 네이버 뉴스 크롤링 코드는 기존과 동일하므로 생략하지 않고 아래에 붙입니다) ...
+// ------------------------------------------------------------
+// 아래부터는 기존 코드와 동일 (뉴스 크롤링 및 API 엔드포인트)
+// ------------------------------------------------------------
 
-app.get('/', (req, res) => res.json({ status: 'ok', service: 'News API (Safety Settings Disabled)' }));
+app.get('/', (req, res) => res.json({ status: 'ok', service: 'News API (Robust Mode)' }));
 app.get('/health', (req, res) => res.json({ status: 'healthy' }));
 
 async function scrapeNaverNews(category) {
@@ -109,8 +120,7 @@ app.get('/api/naver-news', async (req, res) => {
     catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// [API 엔드포인트들]
-
+// API 엔드포인트
 app.post('/api/ai/check-key', async (req, res) => {
     try {
         await callAI('System', 'test', req.body.model, req.headers.authorization?.split(' ')[1]);
