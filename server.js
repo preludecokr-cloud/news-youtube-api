@@ -212,6 +212,7 @@ app.post('/api/ai/check-key', async (req, res) => {
     const { model } = req.body;
     
     if (!apiKey) {
+        // 프론트엔드에서 키가 비어있는 상태로 넘어온 경우
         return res.status(400).json({ error: 'API 키가 입력되지 않았습니다.' });
     }
     
@@ -226,7 +227,7 @@ app.post('/api/ai/check-key', async (req, res) => {
         
         res.json({ status: 'ok', message: 'API 키가 유효합니다.' });
     } catch (error) {
-        // callOpenAI에서 던져진 오류를 401 상태로 클라이언트에 전달
+        // callOpenAI에서 401 오류를 던지면, 401 상태로 클라이언트에 전달
         res.status(401).json({ error: error.message });
     }
 });
