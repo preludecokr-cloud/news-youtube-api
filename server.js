@@ -1,6 +1,6 @@
 // server.js
 // News to YouTube Studio - Backend Server (Render 배포용)
-// OpenAI + Gemini 2.5 통합, 네이버 카테고리 코드(100~105) 매핑 완료 버전
+// OpenAI + Gemini 2.5 통합, 네이버 카테고리 코드(100~105) 매핑 + 방탄 로그 버전
 
 const express = require('express');
 const cors = require('cors');
@@ -192,7 +192,7 @@ app.get('/health', (req, res) => {
 });
 
 // ============================================================
-// 네이버 뉴스 크롤링 (카테고리 코드/라벨 모두 지원)
+// 네이버 뉴스 크롤링 (카테고리 코드/라벨 모두 지원) 방탄 버전
 // ============================================================
 async function scrapeNaverNews(categoryOrCode) {
   // 네이버 sid1 코드 매핑
@@ -206,18 +206,29 @@ async function scrapeNaverNews(categoryOrCode) {
   };
 
   let sid = '100'; // 기본값: 정치
+  let raw = '';
 
-  if (categoryOrCode) {
-    const raw = String(categoryOrCode).trim();
+  if (categoryOrCode != null && categoryOrCode !== undefined) {
+    raw = String(categoryOrCode).trim();
 
     // 100~105 숫자 코드 형식 그대로 들어오는 경우
     if (/^\d{3}$/.test(raw)) {
       sid = raw;
     } else if (labelToCode[raw]) {
-      // '정치', '경제' 같은 한글 라벨이 온 경우
+      // '정치', '경제', '세계' 같은 한글 라벨이 온 경우
       sid = labelToCode[raw];
+    } else {
+      // 혹시 모를 변형 라벨 대비 (예: "세계 " / "세계뉴스" / "세계 카테고리")
+      if (raw.includes('세계')) sid = '104';
+      else if (raw.includes('정치')) sid = '100';
+      else if (raw.includes('경제')) sid = '101';
+      else if (raw.includes('사회')) sid = '102';
+      else if (raw.includes('생활')) sid = '103';
+      else if (raw.includes('IT') || raw.includes('과학')) sid = '105';
     }
   }
+
+  console.log('[Naver] 요청 category:', categoryOrCode, '→ raw:', raw, '→ sid1:', sid);
 
   try {
     const response = await axios.get(
