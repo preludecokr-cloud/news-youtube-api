@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News to YouTube Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">
+                <span class="logo-icon">📺</span>
+                <h1>News to YouTube Studio</h1>
+            </div>
+            <p class="tagline">뉴스 → 대본 → 제목 → 썸네일 카피까지 한 번에</p>
+        </div>
+    </header>
+
+    <div class="api-settings-bar">
+        <div class="api-settings-content">
+            <div class="api-input-group">
+                <label for="modelSelect">🤖 AI 모델:</label>
+                <select id="modelSelect" class="select-box">
+                    <option value="gpt-4o">GPT-4o (추천)</option>
+                    <option value="gpt-4o-mini">GPT-4o Mini (저렴)</option>
+                    <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                    <option value="gpt-3.5-turbo">GPT-3.5 Turbo (가장 저렴)</option>
+                </select>
+            </div>
+            
+            <div class="api-input-group api-key-input-group">
+                <label for="apiKeyInput">🔑 OpenAI API Key:</label>
+                <div class="api-key-controls"> 
+                    <input type="password" id="apiKeyInput" class="input-text" placeholder="여기에 API 키를 입력하세요">
+                    <button id="checkApiKeyBtn" class="btn btn-small btn-accent">유효성 체크</button>
+                </div>
+            </div>
+            <div class="api-status">
+                <span id="apiStatus" class="status-indicator">🔄 서버 연결 확인 중...</span>
+                <span id="keyStatusIndicator" class="status-indicator hidden"></span> 
+            </div>
+        </div>
+    </div>
+
+    <main class="main-container">
+        <section class="news-section">
+            <div class="section-header">
+                <h2>📰 네이버 뉴스 실시간 랭킹</h2>
+            </div>
+            
+            <div class="news-controls">
+                <select id="categorySelect" class="select-box">
+                    <option value="정치">정치</option>
+                    <option value="경제">경제</option>
+                    <option value="사회">사회</option>
+                    <option value="생활/문화">생활/문화</option>
+                    <option value="세계">세계</option>
+                    <option value="IT/과학">IT/과학</option>
+                </select>
+                <button id="loadNewsBtn" class="btn btn-primary">
+                    <span class="btn-icon">🔄</span> 실시간 뉴스 불러오기
+                </button>
+            </div>
+
+            <div class="news-actions">
+                <button id="selectAllBtn" class="btn btn-small">전체 선택</button>
+                <button id="deselectAllBtn" class="btn btn-small">전체 해제</button>
+                <button id="mergeSelectedBtn" class="btn btn-accent">
+                    <span class="btn-icon">📋</span> 선택한 기사 요약 모아보기
+                </button>
+            </div>
+
+            <div id="newsLoading" class="loading hidden">
+                <div class="spinner"></div>
+                <span>뉴스를 불러오는 중...</span>
+            </div>
+
+            <div id="newsList" class="news-list"></div>
+
+            <div class="merged-summary-section">
+                <div class="section-subheader">
+                    <h3>📝 선택된 기사 요약</h3>
+                    <button id="copySummaryBtn" class="btn btn-small btn-copy">
+                        <span class="btn-icon">📋</span> 복사하기
+                    </button>
+                </div>
+                <textarea id="mergedSummary" class="textarea-large" placeholder="선택한 기사들의 요약이 여기에 표시됩니다..."></textarea>
+            </div>
+        </section>
+
+        <section class="ai-section">
+            <div class="section-header">
+                <h2>🤖 AI 작업 공간</h2>
+            </div>
+
+            <nav class="tab-nav">
+                <button class="tab-btn active" data-tab="tab1">대본 재구성</button>
+                <button class="tab-btn" data-tab="tab2">구조 분석</button>
+                <button class="tab-btn" data-tab="tab3">새 대본 작성</button>
+                <button class="tab-btn" data-tab="tab4">제목 생성</button>
+                <button class="tab-btn" data-tab="tab5">썸네일 카피</button>
+            </nav>
+
+            <div class="tab-content">
+                <div id="tab1" class="tab-panel active">
+                    <div class="panel-inner">
+                        <label class="label">원본 요약/기사 내용 붙여넣기</label>
+                        <textarea id="scriptInput" class="textarea-medium" placeholder="재구성할 텍스트를 입력하세요..."></textarea>
+                        
+                        <div class="options-row">
+                            <div class="option-group">
+                                <label class="label">콘셉트 선택</label>
+                                <select id="conceptSelect" class="select-box">
+                                    <option value="뉴스 브리핑형">뉴스 브리핑형</option>
+                                    <option value="해설/분석형">해설/분석형</option>
+                                    <option value="스토리텔링형">스토리텔링형</option>
+                                    <option value="토크쇼 대본형">토크쇼 대본형</option>
+                                    <option value="쇼츠(1분) 스크립트형">쇼츠(1분) 스크립트형</option>
+                                    <option value="custom">사용자 입력</option>
+                                </select>
+                                <input type="text" id="customConcept" class="input-text hidden" placeholder="직접 콘셉트 입력...">
+                            </div>
+                            <div class="option-group">
+                                <label class="label">분량 선택</label>
+                                <select id="lengthSelect" class="select-box">
+                                    <option value="쇼츠(1분 내외)">쇼츠(1분 내외)</option>
+                                    <option value="5분 분량">5분 분량</option>
+                                    <option value="10분 분량">10분 분량</option>
+                                    <option value="20분 분량">20분 분량</option>
+                                    <option value="자유 (AI가 적절히)">자유 (AI가 적절히)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <button id="transformBtn" class="btn btn-primary btn-large">
+                            <span class="btn-icon">✨</span> 대본 재구성 실행
+                        </button>
+
+                        <div id="transformLoading" class="loading hidden">
+                            <div class="spinner"></div>
+                            <span>대본을 재구성하는 중...</span>
+                        </div>
+
+                        <div class="result-section">
+                            <div class="result-header">
+                                <h4>📄 재구성된 대본</h4>
+                                <button id="copyTransformBtn" class="btn btn-small btn-copy">
+                                    <span class="btn-icon">📋</span> 복사하기
+                                </button>
+                            </div>
+                            <textarea id="transformResult" class="textarea-large" placeholder="재구성된 대본이 여기에 표시됩니다..."></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab2" class="tab-panel">
+                    <div class="panel-inner">
+                        <label class="label">분석할 대본 또는 기사 텍스트</label>
+                        <textarea id="analysisInput" class="textarea-medium" placeholder="분석할 텍스트를 입력하세요..."></textarea>
+                        
+                        <div class="button-row">
+                            <button id="structureBtn" class="btn btn-primary">
+                                <span class="btn-icon">🔍</span> 구조 분석 실행
+                            </button>
+                            <button id="summaryBtn" class="btn btn-primary">
+                                <span class="btn-icon">📝</span> 핵심 요약 실행
+                            </button>
+                        </div>
+
+                        <div id="analysisLoading" class="loading hidden">
+                            <div class="spinner"></div>
+                            <span>분석 중...</span>
+                        </div>
+
+                        <div class="result-section">
+                            <div class="result-header">
+                                <h4>📊 구조 분석 결과</h4>
+                                <button id="copyStructureBtn" class="btn btn-small btn-copy">
+                                    <span class="btn-icon">📋</span> 복사하기
+                                </button>
+                            </div>
+                            <textarea id="structureResult" class="textarea-medium" placeholder="구조 분석 결과가 여기에 표시됩니다..."></textarea>
+                        </div>
+
+                        <div class="result-section">
+                            <div class="result-header">
+                                <h4>📌 핵심 요약</h4>
+                                <button id="copySummaryResultBtn" class="btn btn-small btn-copy">
+                                    <span class="btn-icon">📋</span> 복사하기
+                                </button>
+                            </div>
+                            <textarea id="summaryResult" class="textarea-medium" placeholder="핵심 요약이 여기에 표시됩니다..."></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab3" class="tab-panel">
+                    <div class="panel-inner">
+                        <div class="input-group">
+                            <label class="label">주제/키워드</label>
+                            <input type="text" id="topicInput" class="input-text" placeholder="영상 주제나 키워드를 입력하세요...">
+                        </div>
+
+                        <div class="options-row">
+                            <div class="option-group">
+                                <label class="label">영상 콘셉트</label>
+                                <select id="newConceptSelect" class="select-box">
+                                    <option value="해설형">해설형</option>
+                                    <option value="드라마틱 스토리텔링">드라마틱 스토리텔링</option>
+                                    <option value="팩트 위주">팩트 위주</option>
+                                    <option value="인터뷰 형식">인터뷰 형식</option>
+                                    <option value="브이로그 스타일">브이로그 스타일</option>
+                                    <option value="교육/튜토리얼">교육/튜토리얼</option>
+                                </select>
+                            </div>
+                            <div class="option-group">
+                                <label class="label">분량 선택</label>
+                                <select id="newLengthSelect" class="select-box">
+                                    <option value="쇼츠(1분)">쇼츠(1분)</option>
+                                    <option value="5분">5분</option>
+                                    <option value="10분">10분</option>
+                                    <option value="20분 이상">20분 이상</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <button id="newScriptBtn" class="btn btn-primary btn-large">
+                            <span class="btn-icon">✍️</span> 새 대본 작성
+                        </button>
+
+                        <div id="newScriptLoading" class="loading hidden">
+                            <div class="spinner"></div>
+                            <span>새로운 대본을 작성하는 중...</span>
+                        </div>
+
+                        <div class="result-section">
+                            <div class="result-header">
+                                <h4>📜 새로운 대본</h4>
+                                <button id="copyNewScriptBtn" class="btn btn-small btn-copy">
+                                    <span class="btn-icon">📋</span> 복사하기
+                                </button>
+                            </div>
+                            <textarea id="newScriptResult" class="textarea-large" placeholder="새로운 대본이 여기에 표시됩니다..."></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab4" class="tab-panel">
+                    <div class="panel-inner">
+                        <label class="label">제목 생성 기준 텍스트</label>
+                        <textarea id="titleInput" class="textarea-medium" placeholder="기사 요약 또는 대본을 입력하세요..."></textarea>
+                        
+                        <button id="titleBtn" class="btn btn-primary btn-large">
+                            <span class="btn-icon">🏷️</span> 제목 생성
+                        </button>
+
+                        <div id="titleLoading" class="loading hidden">
+                            <div class="spinner"></div>
+                            <span>제목을 생성하는 중...</span>
+                        </div>
+
+                        <div class="titles-container">
+                            <div class="title-box safe-titles">
+                                <div class="title-box-header">
+                                    <h4>📘 안정적인 제목 (정보 중심)</h4>
+                                    <button id="copySafeTitlesBtn" class="btn btn-small btn-copy">전체 복사</button>
+                                </div>
+                                <ul id="safeTitlesList" class="title-list"></ul>
+                            </div>
+                            <div class="title-box clickbait-titles">
+                                <div class="title-box-header">
+                                    <h4>🔥 자극적인 제목 (클릭 유도형)</h4>
+                                    <button id="copyClickbaitTitlesBtn" class="btn btn-small btn-copy">전체 복사</button>
+                                </div>
+                                <ul id="clickbaitTitlesList" class="title-list"></ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab5" class="tab-panel">
+                    <div class="panel-inner">
+                        <label class="label">썸네일 카피 생성 기준 텍스트</label>
+                        <textarea id="thumbnailInput" class="textarea-medium" placeholder="주제 또는 대본을 입력하세요..."></textarea>
+                        
+                        <div class="option-group">
+                            <label class="label">카피 길이</label>
+                            <select id="copyLengthSelect" class="select-box">
+                                <option value="짧게(2~4단어)">짧게 (2~4단어)</option>
+                                <option value="보통(5~8단어)">보통 (5~8단어)</option>
+                            </select>
+                        </div>
+
+                        <button id="thumbnailBtn" class="btn btn-primary btn-large">
+                            <span class="btn-icon">🖼️</span> 썸네일 카피 생성
+                        </button>
+
+                        <div id="thumbnailLoading" class="loading hidden">
+                            <div class="spinner"></div>
+                            <span>썸네일 카피를 생성하는 중...</span>
+                        </div>
+
+                        <div class="thumbnail-container">
+                            <div class="thumbnail-box emotional">
+                                <div class="thumbnail-box-header">
+                                    <h4>💖 감성자극형</h4>
+                                    <button class="btn btn-small btn-copy copy-emotional">전체 복사</button>
+                                </div>
+                                <ul id="emotionalList" class="copy-list"></ul>
+                            </div>
+                            <div class="thumbnail-box informational">
+                                <div class="thumbnail-box-header">
+                                    <h4>📊 정보전달형</h4>
+                                    <button class="btn btn-small btn-copy copy-informational">전체 복사</button>
+                                </div>
+                                <ul id="informationalList" class="copy-list"></ul>
+                            </div>
+                            <div class="thumbnail-box visual">
+                                <div class="thumbnail-box-header">
+                                    <h4>⚡ 시각자극형</h4>
+                                    <button class="btn btn-small btn-copy copy-visual">전체 복사</button>
+                                </div>
+                                <ul id="visualList" class="copy-list"></ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="errorMessage" class="error-message hidden"></div>
+
+    <div id="toast" class="toast hidden">복사되었습니다!</div>
+
+    <script src="app.js"></script>
+</body>
+</html>
