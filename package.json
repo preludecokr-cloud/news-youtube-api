@@ -1,6 +1,6 @@
 {
   "name": "news-to-youtube-studio-api",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "News to YouTube Studio Backend API",
   "main": "server.js",
   "scripts": {
@@ -15,7 +15,7 @@
     "cors": "^2.8.5",
     "axios": "^1.6.2",
     "cheerio": "^1.0.0-rc.12",
-    "iconv-lite": "^0.6.3", 
+    "iconv-lite": "^0.6.3",
     "@google/generative-ai": "^0.21.0"
   },
   "keywords": [
