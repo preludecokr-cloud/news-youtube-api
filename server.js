@@ -1,6 +1,6 @@
 // server.js
 // News to YouTube Studio - Backend Server (Render 배포용)
-// OpenAI + Gemini 2.5 통합, 네이버 카테고리 코드(100~105) 매핑 + 방탄 로그 버전
+// OpenAI + Gemini 2.5 통합 + 네이버 카테고리 매핑 (섹션별 기사)
 
 const express = require('express');
 const cors = require('cors');
@@ -12,22 +12,18 @@ const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@googl
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ============================================================
-// 미들웨어 설정
-// ============================================================
+// 미들웨어
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// ============================================================
-// 공통 유틸
-// ============================================================
-
+// ------------------------------------------------------------
+// 공통 유틸: 헤더에서 API 키 추출
+// ------------------------------------------------------------
 function getApiKeyFromHeader(req) {
   const auth = req.headers.authorization || '';
   if (!auth) return null;
@@ -36,8 +32,6 @@ function getApiKeyFromHeader(req) {
   if (parts.length === 2 && /^Bearer$/i.test(parts[0])) {
     return parts[1].trim();
   }
-
-  // 혹시 Bearer 없이 바로 키만 들어올 경우 대비
   return auth.trim();
 }
 
@@ -46,32 +40,26 @@ function getApiKeyFromHeader(req) {
 // ============================================================
 async function callOpenAI(systemPrompt, userPrompt, model, apiKey) {
   try {
-    const url = 'https://api.openai.com/v1/chat/completions';
-
     const response = await axios.post(
-      url,
+      'https://api.openai.com/v1/chat/completions',
       {
         model,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
+          { role: 'user', content: userPrompt },
         ],
-        temperature: 0.7
+        temperature: 0.7,
       },
       {
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`
+          Authorization: `Bearer ${apiKey}`,
         },
-        timeout: 30000
+        timeout: 30000,
       }
     );
 
-    const text =
-      response.data?.choices?.[0]?.message?.content?.trim() ||
-      '';
-
-    return text;
+    return response.data?.choices?.[0]?.message?.content?.trim() || '';
   } catch (error) {
     console.error('OpenAI Error:', error.response?.data || error.message);
     const msg = error.response?.data?.error?.message || error.message;
@@ -90,30 +78,17 @@ async function callGemini(systemPrompt, userPrompt, model, apiKey) {
 
     const genAI = new GoogleGenerativeAI(apiKey);
 
-    // 안전 필터 해제 (뉴스/범죄 기사 등에서도 막히지 않도록)
+    // 안전 필터 완화
     const safetySettings = [
-      {
-        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-        threshold: HarmBlockThreshold.BLOCK_NONE
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        threshold: HarmBlockThreshold.BLOCK_NONE
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        threshold: HarmBlockThreshold.BLOCK_NONE
-      },
-      {
-        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold: HarmBlockThreshold.BLOCK_NONE
-      }
+      { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
     ];
 
-    // 모델명 보정 (1.5 → 2.5 계열 강제 사용)
+    // 모델명 보정 (UI에서 어떤 문자열 보내도 2.5 계열로 매핑)
     let targetModel = 'gemini-2.5-flash';
     const lower = (model || '').toLowerCase();
-
     if (lower.includes('pro')) {
       targetModel = 'gemini-2.5-pro';
     } else if (lower.includes('flash')) {
@@ -124,7 +99,7 @@ async function callGemini(systemPrompt, userPrompt, model, apiKey) {
 
     const generativeModel = genAI.getGenerativeModel({
       model: targetModel,
-      safetySettings
+      safetySettings,
     });
 
     const finalPrompt = `
@@ -141,36 +116,29 @@ ${userPrompt}
   } catch (error) {
     console.error('Gemini Error:', error);
     const msg = error?.message || String(error);
-
     if (msg.includes('API key')) {
       throw new Error('Gemini API 키가 틀렸습니다.');
     }
     if (msg.includes('not found') || msg.includes('404')) {
       throw new Error('Gemini 모델을 찾을 수 없습니다.');
     }
-
     throw new Error(`Gemini 오류: ${msg}`);
   }
 }
 
 // ============================================================
-// 통합 AI 호출기
+// 통합 AI 호출
 // ============================================================
 async function callAI(systemPrompt, userPrompt, model, apiKey) {
-  if (!apiKey) {
-    throw new Error('API 키를 입력해주세요.');
-  }
+  if (!apiKey) throw new Error('API 키를 입력해주세요.');
 
   const cleanKey = apiKey.trim();
   const lowerModel = (model || '').toLowerCase();
 
   if (lowerModel.includes('gpt')) {
-    // OpenAI 계열
     return await callOpenAI(systemPrompt, userPrompt, model, cleanKey);
   }
-
   if (lowerModel.includes('gemini') || lowerModel.includes('flash')) {
-    // Gemini 계열
     return await callGemini(systemPrompt, userPrompt, model, cleanKey);
   }
 
@@ -178,13 +146,10 @@ async function callAI(systemPrompt, userPrompt, model, apiKey) {
 }
 
 // ============================================================
-// 기본 라우트 / 헬스체크
+// 기본 라우트
 // ============================================================
 app.get('/', (req, res) => {
-  res.json({
-    status: 'ok',
-    service: 'News to YouTube Studio Backend'
-  });
+  res.json({ status: 'ok', service: 'News to YouTube Studio Backend' });
 });
 
 app.get('/health', (req, res) => {
@@ -192,89 +157,76 @@ app.get('/health', (req, res) => {
 });
 
 // ============================================================
-// 네이버 뉴스 크롤링 (카테고리 코드/라벨 모두 지원) 방탄 버전
+// 네이버 뉴스 크롤링 (섹션별 최신 기사)
+//  - categoryOrCode: '세계' 또는 '104' 둘 다 지원
 // ============================================================
 async function scrapeNaverNews(categoryOrCode) {
-  // 네이버 sid1 코드 매핑
   const labelToCode = {
     '정치': '100',
     '경제': '101',
     '사회': '102',
     '생활/문화': '103',
     '세계': '104',
-    'IT/과학': '105'
+    'IT/과학': '105',
   };
 
-  let sid = '100'; // 기본값: 정치
-  let raw = '';
-
-  if (categoryOrCode != null && categoryOrCode !== undefined) {
-    raw = String(categoryOrCode).trim();
-
-    // 100~105 숫자 코드 형식 그대로 들어오는 경우
+  let sid = '100';
+  if (categoryOrCode) {
+    const raw = String(categoryOrCode).trim();
     if (/^\d{3}$/.test(raw)) {
       sid = raw;
     } else if (labelToCode[raw]) {
-      // '정치', '경제', '세계' 같은 한글 라벨이 온 경우
       sid = labelToCode[raw];
-    } else {
-      // 혹시 모를 변형 라벨 대비 (예: "세계 " / "세계뉴스" / "세계 카테고리")
-      if (raw.includes('세계')) sid = '104';
-      else if (raw.includes('정치')) sid = '100';
-      else if (raw.includes('경제')) sid = '101';
-      else if (raw.includes('사회')) sid = '102';
-      else if (raw.includes('생활')) sid = '103';
-      else if (raw.includes('IT') || raw.includes('과학')) sid = '105';
     }
   }
 
-  console.log('[Naver] 요청 category:', categoryOrCode, '→ raw:', raw, '→ sid1:', sid);
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const dateStr = `${yyyy}${mm}${dd}`;
+
+  const url = `https://news.naver.com/main/list.naver?mode=LSD&mid=sec&sid1=${sid}&date=${dateStr}`;
+  console.log('[Naver] 요청 category:', categoryOrCode, '→ sid1:', sid, 'url:', url);
 
   try {
-    const response = await axios.get(
-      `https://news.naver.com/main/ranking/popularDay.naver?mid=etc&sid1=${sid}`,
-      {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-        responseType: 'arraybuffer',
-        timeout: 10000
-      }
-    );
+    const response = await axios.get(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      responseType: 'arraybuffer',
+      timeout: 10000,
+    });
 
     const html = iconv.decode(response.data, 'euc-kr');
     const $ = cheerio.load(html);
     const news = [];
     let rank = 1;
 
-    $('.rankingnews_list li, .rankingnews_box .rankingnews_list li').each(
-      (i, el) => {
-        if (rank > 50) return false; // 최대 50개까지만
+    // 섹션 기사 리스트 수집 (헤드라인 + 일반 기사)
+    $('.newsflash_body .type06_headline li, .newsflash_body .type06 li').each((i, el) => {
+      if (rank > 50) return false; // 최대 50개
 
-        const $item = $(el);
-        const $a = $item.find('a').first();
+      const $item = $(el);
+      const $a = $item.find('a').first();
 
-        let title = ($a.attr('title') || '').trim();
-        if (!title) title = $a.text().trim();
+      let title = ($a.attr('title') || '').trim();
+      if (!title) title = $a.text().trim();
 
-        const href = $a.attr('href');
-        if (!title || !href) return;
+      const href = $a.attr('href');
+      if (!title || !href) return;
 
-        const link = href.startsWith('http')
-          ? href
-          : `https://news.naver.com${href}`;
+      const link = href.startsWith('http') ? href : `https://news.naver.com${href}`;
+      const press = $item.find('.writing').text().trim();
+      const time = $item.find('.date').text().trim();
 
-        const press = $item.find('.rankingnews_name').text().trim() || '';
-        const time = $item.find('.rankingnews_time').text().trim() || '';
-
-        news.push({
-          rank: rank++,
-          title,
-          link,
-          press,
-          time,
-          summary: title // 기본 요약은 제목으로 세팅
-        });
-      }
-    );
+      news.push({
+        rank: rank++,
+        title,
+        link,
+        press,
+        time,
+        summary: title,
+      });
+    });
 
     return news;
   } catch (error) {
@@ -283,10 +235,9 @@ async function scrapeNaverNews(categoryOrCode) {
   }
 }
 
-// 실제 API 엔드포인트
 app.get('/api/naver-news', async (req, res) => {
   try {
-    const category = req.query.category || '100'; // 기본: 정치
+    const category = req.query.category || '정치'; // '세계' 또는 '104' 둘 다 OK
     const news = await scrapeNaverNews(category);
     res.json(news);
   } catch (e) {
@@ -325,16 +276,17 @@ app.post('/api/ai/script-transform', async (req, res) => {
     const apiKey = getApiKeyFromHeader(req);
 
     if (!text) {
-      return res
-        .status(400)
-        .json({ error: '재구성할 텍스트를 입력해주세요.' });
+      return res.status(400).json({ error: '재구성할 텍스트를 입력해주세요.' });
     }
+
+    let finalConcept = concept;
+    if (!finalConcept || finalConcept === 'custom') finalConcept = '기본';
 
     const system = `
 당신은 유능한 유튜브 대본 작가입니다.
 다음 조건에 맞춰 자연스러운 한국어 유튜브 내레이션 대본으로 재구성하세요.
 
-- 콘셉트: ${concept || '기본'}
+- 콘셉트: ${finalConcept || '기본'}
 - 분량: ${lengthOption || '기본'}
 - 대상: 일반 시청자
 - 스타일: 말하듯이, 흥미를 유도하면서도 정보는 정확하게
@@ -449,8 +401,6 @@ app.post('/api/ai/titles', async (req, res) => {
 `;
 
     let result = await callAI(system, text, model, apiKey);
-
-    // 마크다운 코드블럭 제거 및 JSON 부분만 추출
     result = result.replace(/```json/gi, '').replace(/```/g, '').trim();
     const jsonMatch = result.match(/\{[\s\S]*\}/);
     const jsonText = jsonMatch ? jsonMatch[0] : result;
@@ -462,7 +412,7 @@ app.post('/api/ai/titles', async (req, res) => {
       console.error('Titles JSON parse error:', err, result);
       return res.json({
         safeTitles: ['AI 응답 오류: 다시 시도해주세요'],
-        clickbaitTitles: []
+        clickbaitTitles: [],
       });
     }
 
@@ -471,7 +421,7 @@ app.post('/api/ai/titles', async (req, res) => {
     console.error('Titles endpoint error:', e);
     res.json({
       safeTitles: ['AI 응답 오류: 다시 시도해주세요'],
-      clickbaitTitles: []
+      clickbaitTitles: [],
     });
   }
 });
@@ -483,9 +433,7 @@ app.post('/api/ai/thumbnail-copies', async (req, res) => {
     const apiKey = getApiKeyFromHeader(req);
 
     if (!text) {
-      return res
-        .status(400)
-        .json({ error: '썸네일 카피를 만들 텍스트를 입력해주세요.' });
+      return res.status(400).json({ error: '썸네일 카피를 만들 텍스트를 입력해주세요.' });
     }
 
     const system = `
@@ -500,7 +448,6 @@ app.post('/api/ai/thumbnail-copies', async (req, res) => {
 `;
 
     let result = await callAI(system, text, model, apiKey);
-
     result = result.replace(/```json/gi, '').replace(/```/g, '').trim();
     const jsonMatch = result.match(/\{[\s\S]*\}/);
     const jsonText = jsonMatch ? jsonMatch[0] : result;
@@ -513,7 +460,7 @@ app.post('/api/ai/thumbnail-copies', async (req, res) => {
       return res.json({
         emotional: ['AI 응답 오류'],
         informational: [],
-        visual: []
+        visual: [],
       });
     }
 
@@ -523,14 +470,12 @@ app.post('/api/ai/thumbnail-copies', async (req, res) => {
     res.json({
       emotional: ['AI 응답 오류'],
       informational: [],
-      visual: []
+      visual: [],
     });
   }
 });
 
-// ============================================================
 // 서버 시작
-// ============================================================
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
