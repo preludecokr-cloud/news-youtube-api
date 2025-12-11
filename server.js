@@ -210,7 +210,6 @@ async function scrapeNaverNews(categoryOrCode) {
   const dd = String(now.getDate()).padStart(2, '0');
   const dateStr = `${yyyy}${mm}${dd}`;
 
-  // 섹션 리스트 페이지
   const url = `https://news.naver.com/main/list.naver?mode=LS2D&mid=shm&sid1=${sid}&sid2=000&date=${dateStr}`;
 
   try {
@@ -231,30 +230,27 @@ async function scrapeNaverNews(categoryOrCode) {
     const news = [];
     let rank = 1;
 
-    // headline + 일반 뉴스 dl만 모아서 처리
-    const items = $(
+    // 1차: 예전 구조 기준 (newsflash_body + dl)
+    const dlItems = $(
       '.newsflash_body .type06_headline li dl, .newsflash_body .type06 li dl'
     );
 
-    items.each((i, el) => {
-      if (rank > 100) return false; // 최대 100개
+    dlItems.each((i, el) => {
+      if (rank > 100) return false;
 
       const $dl = $(el);
 
-      // dt 안의 a들 중 "텍스트 제목"이 있는 a를 우선 사용
-      // (보통 두 번째 dt가 텍스트 제목)
-      let $a = $dl.find('dt a').last(); // 가장 마지막 a (대부분 제목)
+      // 보통 두 번째 dt가 텍스트 제목
+      let $a = $dl.find('dt a').last();
       if (!$a || !$a.attr('href')) {
         $a = $dl.find('a').last();
       }
-
       if (!$a || !$a.attr('href')) return;
 
       let title =
         ($a.text() || $a.attr('title') || '')
           .replace(/\s+/g, ' ')
           .trim();
-
       if (!title) return;
 
       const href = $a.attr('href');
@@ -275,6 +271,56 @@ async function scrapeNaverNews(categoryOrCode) {
       });
     });
 
+    // 2차: 위에서 하나도 못 찾은 경우 → 백업 방식 (링크 기반)
+    if (news.length === 0) {
+      const seen = new Set();
+
+      $('#main_content a').each((i, el) => {
+        if (rank > 100) return false;
+
+        const $a = $(el);
+        const href = $a.attr('href') || '';
+        if (
+          !href.includes('/mnews/article') &&
+          !href.includes('read.naver')
+        ) {
+          return;
+        }
+
+        let title =
+          ($a.text() || $a.attr('title') || '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        if (!title) return;
+
+        if (seen.has(href)) return;
+        seen.add(href);
+
+        const link = href.startsWith('http')
+          ? href
+          : `https://news.naver.com${href}`;
+
+        const $li = $a.closest('li');
+        const press =
+          $li.find('.writing').text().trim() ||
+          $li.find('.press').text().trim() ||
+          '';
+        const time =
+          $li.find('.date').text().trim() ||
+          $li.find('.time').text().trim() ||
+          '';
+
+        news.push({
+          rank: rank++,
+          title,
+          link,
+          press,
+          time,
+          summary: title,
+        });
+      });
+    }
+
     return news;
   } catch (error) {
     console.error('scrapeNaverNews error:', error.message);
@@ -282,15 +328,6 @@ async function scrapeNaverNews(categoryOrCode) {
   }
 }
 
-app.get('/api/naver-news', async (req, res) => {
-  try {
-    const { category } = req.query;
-    const news = await scrapeNaverNews(category || '정치');
-    res.json(news);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
 
 // ==============================
