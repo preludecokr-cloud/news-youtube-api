@@ -91,37 +91,62 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- 뉴스 로딩 핸들러 (수정됨) ---
-    async function handleLoadNews() {
-        setLoading(ui.newsList, true, 'spinner');
-        try {
-            // 버튼에서 선택된 카테고리 값 사용
-            const category = window.appData.currentCategory || '정치';
-            const data = await callApi(`/api/naver-news?category=${encodeURIComponent(category)}`);
-            
-            if(!data || data.length === 0) {
-                ui.newsList.innerHTML = '<div class="empty-state">뉴스가 없습니다.</div>';
-                return;
-            }
-            
-            window.appData.news = data;
-            
-            // 그리드 형태에 맞게 렌더링
-            ui.newsList.innerHTML = data.map((item, idx) => `
+async function handleLoadNews() {
+    setLoading(ui.newsList, true, 'spinner');
+
+    try {
+        const category = window.appData.currentCategory || '정치';
+        let data;
+
+        // ✅ 랭킹 카테고리는 별도 엔드포인트 사용
+        if (category === '랭킹') {
+            data = await callApi(`/api/naver-ranking`);
+        } else {
+            data = await callApi(`/api/naver-news?category=${encodeURIComponent(category)}`);
+        }
+
+        if (!data || data.length === 0) {
+            ui.newsList.innerHTML = '<div class="empty-state">뉴스가 없습니다.</div>';
+            return;
+        }
+
+        window.appData.news = data;
+
+        // ✅ 순위, 제목, 카테고리, 조회수, 업로드시간, 댓글수, 링크를 한 줄 텍스트처럼 표시
+        ui.newsList.innerHTML = data.map((item, idx) => {
+            const rank = item.rank ?? (idx + 1);
+            const title = escapeHtml(item.title || '');
+            const cat = category === '랭킹' ? '랭킹' : escapeHtml(category);
+            const views = item.views ? `조회수 ${item.views}` : '';
+            const comments = item.comments ? `댓글 ${item.comments}` : '';
+            const time = item.time || '';
+            const press = item.press || '';
+            const meta = [cat, press, views, comments, time].filter(Boolean).join(' · ');
+            const link = item.link ? item.link : '#';
+
+            return `
                 <div class="news-item" onclick="toggleCheckbox(${idx})">
                     <div class="news-info">
-                        <span class="news-rank">${item.rank}</span>
+                        <span class="news-rank">${rank}</span>
                         <div style="flex:1; overflow:hidden;">
-                            <span class="news-title">${escapeHtml(item.title)}</span>
-                            <div style="font-size:0.75rem; color:#64748b; margin-top:4px;">${item.press || ''}</div>
+                            <a href="${link}" target="_blank" class="news-title" style="text-decoration:none; color:inherit;">
+                                ${title}
+                            </a>
+                            <div style="font-size:0.75rem; color:#64748b; margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                                ${meta}
+                            </div>
                         </div>
                     </div>
                     <input type="checkbox" class="news-check" id="check-${idx}" data-idx="${idx}" onclick="event.stopPropagation()">
                 </div>
-            `).join('');
-        } catch(e) {
-            ui.newsList.innerHTML = `<div class="empty-state error">오류: ${e.message}</div>`;
-        }
+            `;
+        }).join('');
+    } catch (e) {
+        console.error(e);
+        ui.newsList.innerHTML = `<div class="empty-state error">오류: ${e.message}</div>`;
     }
+}
+
 
     // --- 공통 함수 (기존 유지) ---
     function handleNavClick(e) {
