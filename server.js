@@ -174,14 +174,16 @@ app.get('/health', (req, res) => {
 
 // ==============================
 // 네이버 섹션 뉴스 크롤링
+//  - /api/naver-news?category=정치/경제/사회/생활/세계/IT/과학
 // ==============================
 async function scrapeNaverNews(categoryOrCode) {
+  // 버튼 라벨 → 네이버 섹션 코드 매핑
   const labelToCode = {
     '정치': '100',
     '경제': '101',
     '사회': '102',
     '생활/문화': '103',
-    '생활': '103',
+    '생활': '103',   // "생활" 버튼용 별칭
     '세계': '104',
     'IT/과학': '105',
   };
@@ -190,20 +192,23 @@ async function scrapeNaverNews(categoryOrCode) {
   if (categoryOrCode) {
     const raw = String(categoryOrCode).trim();
     if (/^\d{3}$/.test(raw)) {
+      // 100, 101 같이 숫자 코드로 들어온 경우
       sid = raw;
     } else if (labelToCode[raw]) {
       sid = labelToCode[raw];
     }
   }
 
+  // 오늘 날짜 (네이버 리스트는 날짜까지 같이 붙여야 함)
   const now = new Date();
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
   const dateStr = `${yyyy}${mm}${dd}`;
 
-  const url = `https://news.naver.com/main/list.naver?mode=LS2D&mid=shm&sid1=${sid}&sid2=000&date=${dateStr}`;
-  console.log('[Naver] 요청 category:', categoryOrCode, '→ sid1:', sid, 'url:', url);
+  // 🔥 옛날에 잘 됐던 패턴으로 복구: mode=LSD & mid=sec
+  const url = `https://news.naver.com/main/list.naver?mode=LSD&mid=sec&sid1=${sid}&date=${dateStr}`;
+  console.log('[Naver] 섹션 뉴스 요청:', { categoryOrCode, sid, url });
 
   try {
     const response = await axios.get(url, {
@@ -222,26 +227,44 @@ async function scrapeNaverNews(categoryOrCode) {
     const news = [];
     let rank = 1;
 
-    // 1차: 기존 섹션 리스트 구조 (dl 기반)
-    const dlItems = $('.newsflash_body .type06_headline li dl, .newsflash_body .type06 li dl');
-    dlItems.each((i, el) => {
-      if (rank > 100) return false;
+    // 1차: 기존 리스트 구조 (type06 헤드라인 + 일반 리스트)
+    const liItems = $('.newsflash_body .type06_headline li, .newsflash_body .type06 li');
 
-      const $dl = $(el);
+    liItems.each((i, el) => {
+      if (rank > 100) return false; // 최대 100개만
+
+      const $li = $(el);
+      const $dl = $li.find('dl');
+
+      // dt 안의 a들 중 "텍스트 제목"용 a를 우선 선택
+      // (대부분 두 번째 dt가 제목. 이미지는 첫 번째 dt)
       let $a = $dl.find('dt a').last();
       if (!$a || !$a.attr('href')) {
-        $a = $dl.find('a').last();
+        $a = $li.find('a').last();
       }
       if (!$a || !$a.attr('href')) return;
 
-      let title = ($a.text() || $a.attr('title') || '').replace(/\s+/g, ' ').trim();
-      if (!title) return;
+      // "동영상기사" 같은 텍스트만 있는 a는 스킵
+      let title = ($a.text() || $a.attr('title') || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (!title || title === '동영상기사') return;
 
       const href = $a.attr('href');
-      const link = href.startsWith('http') ? href : `https://news.naver.com${href}`;
+      const link = href.startsWith('http')
+        ? href
+        : `https://news.naver.com${href}`;
 
-      const press = $dl.find('dd span.writing').text().trim();
-      const time = $dl.find('dd span.date').text().trim();
+      const press =
+        $dl.find('span.writing').text().trim() ||
+        $li.find('.writing').text().trim() ||
+        '';
+
+      const time =
+        $dl.find('span.date').text().trim() ||
+        $li.find('.date').text().trim() ||
+        '';
 
       news.push({
         rank: rank++,
@@ -253,30 +276,43 @@ async function scrapeNaverNews(categoryOrCode) {
       });
     });
 
-    // 2차: 구조가 바뀐 경우 fallback (메인 컨텐츠에서 기사 링크 검색)
+    // 2차: 위 구조에서 하나도 못 찾은 경우 → 백업 방식
     if (news.length === 0) {
+      console.log('[Naver] 기본 리스트에서 기사 0개, fallback 시도');
       const seen = new Set();
+
       $('#main_content a').each((i, el) => {
         if (rank > 100) return false;
 
         const $a = $(el);
         const href = $a.attr('href') || '';
-        if (!href.includes('/mnews/article') && !href.includes('read.naver')) {
+
+        // 실제 기사 링크만 필터링
+        if (
+          !href.includes('/mnews/article') &&
+          !href.includes('read.naver')
+        ) {
           return;
         }
 
-        let title = ($a.text() || $a.attr('title') || '').replace(/\s+/g, ' ').trim();
-        if (!title) return;
+        let title = ($a.text() || $a.attr('title') || '')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (!title || title === '동영상기사') return;
         if (seen.has(href)) return;
         seen.add(href);
 
-        const link = href.startsWith('http') ? href : `https://news.naver.com${href}`;
+        const link = href.startsWith('http')
+          ? href
+          : `https://news.naver.com${href}`;
 
         const $li = $a.closest('li');
         const press =
           $li.find('.writing').text().trim() ||
           $li.find('.press').text().trim() ||
           '';
+
         const time =
           $li.find('.date').text().trim() ||
           $li.find('.time').text().trim() ||
@@ -293,12 +329,14 @@ async function scrapeNaverNews(categoryOrCode) {
       });
     }
 
+    console.log('[Naver] 섹션 뉴스 개수:', news.length);
     return news;
   } catch (error) {
     console.error('scrapeNaverNews error:', error.message);
     throw new Error('네이버 뉴스 수집 실패: ' + error.message);
   }
 }
+
 
 app.get('/api/naver-news', async (req, res) => {
   try {
