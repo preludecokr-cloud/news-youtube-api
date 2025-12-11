@@ -1,6 +1,5 @@
 // server.js
-// News to YouTube Studio - Backend Server (Render 배포용)
-// OpenAI + Gemini 2.5 통합 + 네이버 카테고리/랭킹 크롤링
+// News to YouTube Studio - Backend (Naver News + Ranking + AI)
 
 const express = require('express');
 const cors = require('cors');
@@ -139,7 +138,8 @@ async function callGemini(system, userText, model, apiKey) {
     return text;
   } catch (error) {
     console.error('Gemini Error:', error.response?.data || error.message);
-    const msg = error?.response?.data?.error?.message || error?.message || String(error);
+    const msg =
+      error?.response?.data?.error?.message || error?.message || String(error);
     if (msg.includes('API key')) {
       throw new Error('Gemini API 키가 틀렸습니다.');
     }
@@ -164,7 +164,7 @@ async function callAI(system, userText, model, apiKey) {
     return callGemini(system, userText, model, apiKey);
   }
 
-  // 아무것도 안 들어오면 OpenAI 기본
+  // 아무것도 없으면 기본 OpenAI
   return callOpenAI(system, userText, model, apiKey);
 }
 
@@ -189,7 +189,7 @@ async function scrapeNaverNews(categoryOrCode) {
     '경제': '101',
     '사회': '102',
     '생활/문화': '103',
-    '생활': '103', // 프론트 버튼용
+    '생활': '103', // 프론트 버튼 "생활" 대응
     '세계': '104',
     'IT/과학': '105',
   };
@@ -208,13 +208,19 @@ async function scrapeNaverNews(categoryOrCode) {
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
-  const date = `${yyyy}${mm}${dd}`;
+  const dateStr = `${yyyy}${mm}${dd}`;
 
-  const url = `https://news.naver.com/main/list.naver?mode=LS2D&mid=shm&sid1=${sid}&sid2=000&date=${date}`;
+  // 섹션 리스트 페이지 (예전 정상 동작하던 패턴)
+  const url = `https://news.naver.com/main/list.naver?mode=LS2D&mid=shm&sid1=${sid}&sid2=000&date=${dateStr}`;
 
   try {
     const response = await axios.get(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        Accept:
+          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
       responseType: 'arraybuffer',
       timeout: 10_000,
     });
@@ -227,20 +233,21 @@ async function scrapeNaverNews(categoryOrCode) {
 
     $('.newsflash_body .type06_headline li, .newsflash_body .type06 li').each(
       (i, el) => {
-        if (rank > 100) return false; // 최대 100개
+        if (rank > 100) return false;
 
         const $item = $(el);
         const $a = $item.find('a').first();
 
         let title = ($a.attr('title') || '').trim();
         if (!title) title = $a.text().trim();
+        if (!title) return;
 
         const href = $a.attr('href');
-        if (!title || !href) return;
-
+        if (!href) return;
         const link = href.startsWith('http')
           ? href
           : `https://news.naver.com${href}`;
+
         const press = $item.find('.writing').text().trim();
         const time = $item.find('.date').text().trim();
 
@@ -281,7 +288,12 @@ async function scrapeNaverRanking() {
 
   try {
     const response = await axios.get(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        Accept:
+          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
       responseType: 'arraybuffer',
       timeout: 10_000,
     });
@@ -301,7 +313,7 @@ async function scrapeNaverRanking() {
         '언론사 미상';
 
       $box.find('ul.rankingnews_list li').each((__, li) => {
-        if (globalRank > 200) return false; // 최대 200개
+        if (globalRank > 200) return false;
 
         const $li = $(li);
         const $a = $li.find('a').first();
@@ -359,7 +371,7 @@ app.get('/api/naver-ranking', async (req, res) => {
 // AI API 엔드포인트
 // ==============================
 
-// 1. API 키 유효성 검사 (단순: 키 존재 여부만 체크)
+// 1. API 키 체크
 app.post('/api/ai/check-key', async (req, res) => {
   try {
     const apiKey = getApiKeyFromHeader(req);
@@ -512,7 +524,7 @@ app.post('/api/ai/summary', async (req, res) => {
   }
 });
 
-// 6. 제목 생성 (JSON 반환: safeTitles / clickbaitTitles)
+// 6. 제목 생성
 app.post('/api/ai/titles', async (req, res) => {
   try {
     const { text, model } = req.body || {};
@@ -563,7 +575,7 @@ app.post('/api/ai/titles', async (req, res) => {
   }
 });
 
-// 7. 썸네일 카피 생성 (감정/정보/비주얼 3종 JSON)
+// 7. 썸네일 카피 생성
 app.post('/api/ai/thumbnail-copies', async (req, res) => {
   try {
     const { text, model } = req.body || {};
