@@ -344,9 +344,11 @@ app.get('/api/naver-news', async (req, res) => {
     const news = await scrapeNaverNews(category || '정치');
     res.json(news);
   } catch (e) {
+    console.error('/api/naver-news error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
+
 
 // ==============================
 // 네이버 랭킹 뉴스
