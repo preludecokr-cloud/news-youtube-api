@@ -1,36 +1,29 @@
 // server.js
-// News to YouTube Studio - Backend (Naver News + Ranking + AI)
+// News to YouTube Studio - Backend Server (Render 배포용)
+// OpenAI + Gemini 2.5 통합 + 네이버 카테고리 매핑 (섹션별 기사)
 
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const iconv = require('iconv-lite');
-const {
-  GoogleGenerativeAI,
-  HarmCategory,
-  HarmBlockThreshold,
-} = require('@google/generative-ai');
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ==============================
 // 미들웨어
-// ==============================
-app.use(
-  cors({
-    origin: '*',
-    methods: ['GET', 'POST'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  }),
-);
-app.use(express.json({ limit: '10mb' }));
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+app.use(express.json({ 
+  limit: '10mb',
+}));
 app.use(express.urlencoded({ extended: true }));
 
-// ==============================
 // 공통 유틸: 헤더에서 API 키 추출
-// ==============================
 function getApiKeyFromHeader(req) {
   const auth = req.headers.authorization || '';
   if (!auth) return null;
@@ -42,9 +35,9 @@ function getApiKeyFromHeader(req) {
   return auth.trim();
 }
 
-// ==============================
+// ============================================================
 // OpenAI 호출
-// ==============================
+// ============================================================
 async function callOpenAI(system, userText, model, apiKey) {
   const key = apiKey || process.env.OPENAI_API_KEY;
   if (!key) {
@@ -69,12 +62,11 @@ async function callOpenAI(system, userText, model, apiKey) {
           Authorization: `Bearer ${key}`,
           'Content-Type': 'application/json',
         },
-        timeout: 60_000,
-      },
+        timeout: 60000,
+      }
     );
 
-    const content =
-      res.data?.choices?.[0]?.message?.content?.toString().trim() || '';
+    const content = res.data?.choices?.[0]?.message?.content?.toString().trim() || '';
     if (!content) {
       throw new Error('OpenAI 응답이 비어 있습니다.');
     }
@@ -92,9 +84,9 @@ async function callOpenAI(system, userText, model, apiKey) {
   }
 }
 
-// ==============================
+// ============================================================
 // Gemini 호출
-// ==============================
+// ============================================================
 async function callGemini(system, userText, model, apiKey) {
   const key = apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!key) {
@@ -137,9 +129,8 @@ async function callGemini(system, userText, model, apiKey) {
     }
     return text;
   } catch (error) {
-    console.error('Gemini Error:', error.response?.data || error.message);
-    const msg =
-      error?.response?.data?.error?.message || error?.message || String(error);
+    console.error('Gemini Error:', error);
+    const msg = error?.message || String(error);
     if (msg.includes('API key')) {
       throw new Error('Gemini API 키가 틀렸습니다.');
     }
@@ -150,9 +141,9 @@ async function callGemini(system, userText, model, apiKey) {
   }
 }
 
-// ==============================
+// ============================================================
 // 통합 AI 호출 (모델명으로 OpenAI / Gemini 자동 분기)
-// ==============================
+// ============================================================
 async function callAI(system, userText, model, apiKey) {
   const m = (model || '').toLowerCase();
 
@@ -164,13 +155,11 @@ async function callAI(system, userText, model, apiKey) {
     return callGemini(system, userText, model, apiKey);
   }
 
-  // 아무것도 없으면 기본 OpenAI
+  // 아무것도 안 들어오면 기본 OpenAI
   return callOpenAI(system, userText, model, apiKey);
 }
 
-// ==============================
 // 기본 라우트
-// ==============================
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'News to YouTube Studio Backend' });
 });
@@ -179,17 +168,17 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy' });
 });
 
-// ==============================
+// ============================================================
 // 네이버 섹션 뉴스 크롤링
 //  - /api/naver-news?category=정치/경제/사회/생활/세계/IT/과학
-// ==============================
+// ============================================================
 async function scrapeNaverNews(categoryOrCode) {
   const labelToCode = {
     '정치': '100',
     '경제': '101',
     '사회': '102',
     '생활/문화': '103',
-    '생활': '103', // 프론트 버튼 "생활" 대응
+    '생활': '103', // 버튼 라벨 "생활" 대응
     '세계': '104',
     'IT/과학': '105',
   };
@@ -210,56 +199,38 @@ async function scrapeNaverNews(categoryOrCode) {
   const dd = String(now.getDate()).padStart(2, '0');
   const dateStr = `${yyyy}${mm}${dd}`;
 
+  // 섹션 리스트 페이지 (섹션2D, shm)
   const url = `https://news.naver.com/main/list.naver?mode=LS2D&mid=shm&sid1=${sid}&sid2=000&date=${dateStr}`;
+  console.log('[Naver] 요청 category:', categoryOrCode, '→ sid1:', sid, 'url:', url);
 
   try {
     const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        Accept:
-          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
+      headers: { 'User-Agent': 'Mozilla/5.0' },
       responseType: 'arraybuffer',
-      timeout: 10_000,
+      timeout: 10000,
     });
 
     const html = iconv.decode(response.data, 'euc-kr');
     const $ = cheerio.load(html);
-
     const news = [];
     let rank = 1;
 
-    // 1차: 예전 구조 기준 (newsflash_body + dl)
-    const dlItems = $(
-      '.newsflash_body .type06_headline li dl, .newsflash_body .type06 li dl'
-    );
+    // 섹션 기사 리스트 수집 (헤드라인 + 일반 기사)
+    $('.newsflash_body .type06_headline li, .newsflash_body .type06 li').each((i, el) => {
+      if (rank > 100) return false; // 최대 100개
 
-    dlItems.each((i, el) => {
-      if (rank > 100) return false;
+      const $item = $(el);
+      const $a = $item.find('a').first();
 
-      const $dl = $(el);
-
-      // 보통 두 번째 dt가 텍스트 제목
-      let $a = $dl.find('dt a').last();
-      if (!$a || !$a.attr('href')) {
-        $a = $dl.find('a').last();
-      }
-      if (!$a || !$a.attr('href')) return;
-
-      let title =
-        ($a.text() || $a.attr('title') || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-      if (!title) return;
+      let title = ($a.attr('title') || '').trim();
+      if (!title) title = $a.text().trim();
 
       const href = $a.attr('href');
-      const link = href.startsWith('http')
-        ? href
-        : `https://news.naver.com${href}`;
+      if (!title || !href) return;
 
-      const press = $dl.find('dd span.writing').text().trim();
-      const time = $dl.find('dd span.date').text().trim();
+      const link = href.startsWith('http') ? href : `https://news.naver.com${href}`;
+      const press = $item.find('.writing').text().trim();
+      const time = $item.find('.date').text().trim();
 
       news.push({
         rank: rank++,
@@ -271,82 +242,35 @@ async function scrapeNaverNews(categoryOrCode) {
       });
     });
 
-    // 2차: 위에서 하나도 못 찾은 경우 → 백업 방식 (링크 기반)
-    if (news.length === 0) {
-      const seen = new Set();
-
-      $('#main_content a').each((i, el) => {
-        if (rank > 100) return false;
-
-        const $a = $(el);
-        const href = $a.attr('href') || '';
-        if (
-          !href.includes('/mnews/article') &&
-          !href.includes('read.naver')
-        ) {
-          return;
-        }
-
-        let title =
-          ($a.text() || $a.attr('title') || '')
-            .replace(/\s+/g, ' ')
-            .trim();
-        if (!title) return;
-
-        if (seen.has(href)) return;
-        seen.add(href);
-
-        const link = href.startsWith('http')
-          ? href
-          : `https://news.naver.com${href}`;
-
-        const $li = $a.closest('li');
-        const press =
-          $li.find('.writing').text().trim() ||
-          $li.find('.press').text().trim() ||
-          '';
-        const time =
-          $li.find('.date').text().trim() ||
-          $li.find('.time').text().trim() ||
-          '';
-
-        news.push({
-          rank: rank++,
-          title,
-          link,
-          press,
-          time,
-          summary: title,
-        });
-      });
-    }
-
     return news;
   } catch (error) {
     console.error('scrapeNaverNews error:', error.message);
-    throw new Error('네이버 뉴스 수집 실패: ' + error.message);
+    throw new Error('뉴스 불러오기 실패: ' + error.message);
   }
 }
 
+app.get('/api/naver-news', async (req, res) => {
+  try {
+    const category = req.query.category || '정치'; // '세계' 또는 '104' 둘 다 OK
+    const news = await scrapeNaverNews(category);
+    res.json(news);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-
-// ==============================
+// ============================================================
 // 네이버 랭킹 뉴스 (언론사별 많이본 뉴스)
 //  - /api/naver-ranking
-// ==============================
+// ============================================================
 async function scrapeNaverRanking() {
   const url = 'https://news.naver.com/main/ranking/popularDay.naver';
 
   try {
     const response = await axios.get(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        Accept:
-          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
+      headers: { 'User-Agent': 'Mozilla/5.0' },
       responseType: 'arraybuffer',
-      timeout: 10_000,
+      timeout: 10000,
     });
 
     const html = iconv.decode(response.data, 'euc-kr');
@@ -357,7 +281,6 @@ async function scrapeNaverRanking() {
 
     $('.rankingnews_box').each((_, box) => {
       const $box = $(box);
-
       const press =
         $box.find('.rankingnews_name').text().trim() ||
         $box.find('.rankingnews_box_title a').text().trim() ||
@@ -418,11 +341,11 @@ app.get('/api/naver-ranking', async (req, res) => {
   }
 });
 
-// ==============================
+// ============================================================
 // AI API 엔드포인트
-// ==============================
+// ============================================================
 
-// 1. API 키 체크
+// 1. API 키 유효성 검사
 app.post('/api/ai/check-key', async (req, res) => {
   try {
     const apiKey = getApiKeyFromHeader(req);
@@ -442,9 +365,7 @@ app.post('/api/ai/script-transform', async (req, res) => {
     const apiKey = getApiKeyFromHeader(req);
 
     if (!text) {
-      return res
-        .status(400)
-        .json({ error: '재구성할 대본 텍스트를 입력해주세요.' });
+      return res.status(400).json({ error: '재구성할 대본 텍스트를 입력해주세요.' });
     }
 
     const system = `
@@ -483,9 +404,7 @@ app.post('/api/ai/script-new', async (req, res) => {
     const apiKey = getApiKeyFromHeader(req);
 
     if (!topic) {
-      return res
-        .status(400)
-        .json({ error: '대본을 작성할 주제를 입력해주세요.' });
+      return res.status(400).json({ error: '대본을 작성할 주제를 입력해주세요.' });
     }
 
     const system = `
@@ -525,9 +444,7 @@ app.post('/api/ai/structure', async (req, res) => {
     const apiKey = getApiKeyFromHeader(req);
 
     if (!text) {
-      return res
-        .status(400)
-        .json({ error: '분석할 대본 텍스트를 입력해주세요.' });
+      return res.status(400).json({ error: '분석할 대본 텍스트를 입력해주세요.' });
     }
 
     const system = `
@@ -556,9 +473,7 @@ app.post('/api/ai/summary', async (req, res) => {
     const apiKey = getApiKeyFromHeader(req);
 
     if (!text) {
-      return res
-        .status(400)
-        .json({ error: '요약할 텍스트를 입력해주세요.' });
+      return res.status(400).json({ error: '요약할 텍스트를 입력해주세요.' });
     }
 
     const system = `
@@ -575,16 +490,14 @@ app.post('/api/ai/summary', async (req, res) => {
   }
 });
 
-// 6. 제목 생성
+// 6. 제목 생성(JSON 응답)
 app.post('/api/ai/titles', async (req, res) => {
   try {
     const { text, model } = req.body || {};
     const apiKey = getApiKeyFromHeader(req);
 
     if (!text) {
-      return res
-        .status(400)
-        .json({ error: '제목을 만들 텍스트를 입력해주세요.' });
+      return res.status(400).json({ error: '제목을 만들 텍스트를 입력해주세요.' });
     }
 
     const system = `
@@ -609,33 +522,28 @@ app.post('/api/ai/titles', async (req, res) => {
     try {
       parsed = JSON.parse(jsonText);
     } catch (err) {
-      console.error('titles JSON parse error:', err, jsonText);
+      console.error('titles JSON parse error:', err, result);
       return res.status(500).json({
         error: 'AI 응답(JSON) 파싱에 실패했습니다.',
         raw: result,
       });
     }
 
-    res.json({
-      safeTitles: parsed.safeTitles || [],
-      clickbaitTitles: parsed.clickbaitTitles || [],
-    });
+    res.json(parsed);
   } catch (e) {
     console.error('titles endpoint error:', e);
     res.status(500).json({ error: e.message });
   }
 });
 
-// 7. 썸네일 카피 생성
+// 7. 썸네일 카피 생성(JSON 응답)
 app.post('/api/ai/thumbnail-copies', async (req, res) => {
   try {
     const { text, model } = req.body || {};
-    const apiKey = getApiKeyFromHeader(req);
+  const apiKey = getApiKeyFromHeader(req);
 
     if (!text) {
-      return res
-        .status(400)
-        .json({ error: '썸네일 카피를 만들 텍스트를 입력해주세요.' });
+      return res.status(400).json({ error: '썸네일 카피를 만들 텍스트를 입력해주세요.' });
     }
 
     const system = `
@@ -661,21 +569,18 @@ app.post('/api/ai/thumbnail-copies', async (req, res) => {
     try {
       parsed = JSON.parse(jsonText);
     } catch (err) {
-      console.error('thumbnail-copies JSON parse error:', err, jsonText);
-      return res.status(500).json({
-        error: 'AI 응답(JSON) 파싱에 실패했습니다.',
-        raw: result,
+      console.error('Thumbnail JSON parse error:', err, result);
+      return res.json({
+        emotional: ['AI 응답 오류'],
+        informational: [],
+        visual: [],
       });
     }
 
-    res.json({
-      emotional: parsed.emotional || [],
-      informational: parsed.informational || [],
-      visual: parsed.visual || [],
-    });
+    res.json(parsed);
   } catch (e) {
-    console.error('thumbnail endpoint error:', e);
-    res.status(500).json({
+    console.error('Thumbnail endpoint error:', e);
+    res.json({
       emotional: ['AI 응답 오류'],
       informational: [],
       visual: [],
@@ -683,9 +588,7 @@ app.post('/api/ai/thumbnail-copies', async (req, res) => {
   }
 });
 
-// ==============================
 // 서버 시작
-// ==============================
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
