@@ -210,7 +210,7 @@ async function scrapeNaverNews(categoryOrCode) {
   const dd = String(now.getDate()).padStart(2, '0');
   const dateStr = `${yyyy}${mm}${dd}`;
 
-  // 섹션 리스트 페이지 (예전 정상 동작하던 패턴)
+  // 섹션 리스트 페이지
   const url = `https://news.naver.com/main/list.naver?mode=LS2D&mid=shm&sid1=${sid}&sid2=000&date=${dateStr}`;
 
   try {
@@ -231,36 +231,49 @@ async function scrapeNaverNews(categoryOrCode) {
     const news = [];
     let rank = 1;
 
-    $('.newsflash_body .type06_headline li, .newsflash_body .type06 li').each(
-      (i, el) => {
-        if (rank > 100) return false;
-
-        const $item = $(el);
-        const $a = $item.find('a').first();
-
-        let title = ($a.attr('title') || '').trim();
-        if (!title) title = $a.text().trim();
-        if (!title) return;
-
-        const href = $a.attr('href');
-        if (!href) return;
-        const link = href.startsWith('http')
-          ? href
-          : `https://news.naver.com${href}`;
-
-        const press = $item.find('.writing').text().trim();
-        const time = $item.find('.date').text().trim();
-
-        news.push({
-          rank: rank++,
-          title,
-          link,
-          press,
-          time,
-          summary: title,
-        });
-      },
+    // headline + 일반 뉴스 dl만 모아서 처리
+    const items = $(
+      '.newsflash_body .type06_headline li dl, .newsflash_body .type06 li dl'
     );
+
+    items.each((i, el) => {
+      if (rank > 100) return false; // 최대 100개
+
+      const $dl = $(el);
+
+      // dt 안의 a들 중 "텍스트 제목"이 있는 a를 우선 사용
+      // (보통 두 번째 dt가 텍스트 제목)
+      let $a = $dl.find('dt a').last(); // 가장 마지막 a (대부분 제목)
+      if (!$a || !$a.attr('href')) {
+        $a = $dl.find('a').last();
+      }
+
+      if (!$a || !$a.attr('href')) return;
+
+      let title =
+        ($a.text() || $a.attr('title') || '')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+      if (!title) return;
+
+      const href = $a.attr('href');
+      const link = href.startsWith('http')
+        ? href
+        : `https://news.naver.com${href}`;
+
+      const press = $dl.find('dd span.writing').text().trim();
+      const time = $dl.find('dd span.date').text().trim();
+
+      news.push({
+        rank: rank++,
+        title,
+        link,
+        press,
+        time,
+        summary: title,
+      });
+    });
 
     return news;
   } catch (error) {
@@ -278,6 +291,7 @@ app.get('/api/naver-news', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
 
 // ==============================
 // 네이버 랭킹 뉴스 (언론사별 많이본 뉴스)
