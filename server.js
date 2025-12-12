@@ -434,6 +434,122 @@ app.get('/api/naver-ranking', async (req, res) => {
 });
 
 // ==============================
+// 네이버 기사 본문 크롤링
+//  - /api/naver-article?url=<기사URL>
+// ==============================
+function decodeHtmlSmart(buffer) {
+  // 1) UTF-8로 먼저 디코딩
+  const utf8 = iconv.decode(buffer, 'utf-8');
+  const lower = utf8.toLowerCase();
+
+  // meta charset 또는 content-type에서 euc-kr 명시 시 euc-kr로 재시도
+  if (lower.includes('charset=euc-kr') || lower.includes('charset=ks_c_5601-1987')) {
+    return iconv.decode(buffer, 'euc-kr');
+  }
+  return utf8;
+}
+
+function normalizeText(text) {
+  if (!text) return '';
+  return text
+    .replace(/\u00a0/g, ' ')
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function scrapeNaverArticle(articleUrl) {
+  const response = await axios.get(articleUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    },
+    responseType: 'arraybuffer',
+    timeout: 15000,
+  });
+
+  const html = decodeHtmlSmart(response.data);
+  const $ = cheerio.load(html);
+
+  // 제목 추출 (여러 레이아웃 대응)
+  const title =
+    $('meta[property="og:title"]').attr('content')?.trim() ||
+    $('#title_area span').first().text().trim() ||
+    $('.media_end_head_headline').first().text().trim() ||
+    $('#articleTitle').first().text().trim() ||
+    '';
+
+  // 본문 추출 (여러 레이아웃 대응)
+  // - 최신: #dic_area
+  // - 일부: #newsct_article
+  // - 구형: #articleBodyContents
+  const $dic = $('#dic_area');
+  const $newsct = $('#newsct_article');
+  const $old = $('#articleBodyContents');
+
+  let content = '';
+  if ($dic.length) {
+    $dic.find('script, style, figure, em.img_desc, .end_photo_org, ._article_section, .media_end_summary').remove();
+    content = $dic.text();
+  } else if ($newsct.length) {
+    $newsct.find('script, style, figure').remove();
+    content = $newsct.text();
+  } else if ($old.length) {
+    $old.find('script, style, table, figure').remove();
+    content = $old.text();
+  } else {
+    // 최후 fallback: 후보 중 가장 긴 텍스트
+    const candidates = [$('#contents'), $('.newsct_article'), $('article'), $('body')];
+    let best = '';
+    for (const $c of candidates) {
+      const t = $c.text().trim();
+      if (t.length > best.length) best = t;
+    }
+    content = best;
+  }
+
+  content = normalizeText(content);
+
+  if (!content || content.length < 50) {
+    throw new Error('기사 본문을 충분히 추출하지 못했습니다(레이아웃 변경/차단 가능).');
+  }
+
+  return { title, content };
+}
+
+app.get('/api/naver-article', async (req, res) => {
+  try {
+    const url = (req.query.url || '').toString().trim();
+
+    if (!url) {
+      return res.status(400).json({ error: 'url 파라미터가 필요합니다.' });
+    }
+
+    // SSRF/오용 방지: news.naver.com만 허용
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return res.status(400).json({ error: '유효한 URL이 아닙니다.' });
+    }
+
+    const host = (parsed.hostname || '').toLowerCase();
+    if (!host.endsWith('news.naver.com')) {
+      return res.status(400).json({ error: 'news.naver.com 기사 URL만 허용됩니다.' });
+    }
+
+    const data = await scrapeNaverArticle(url);
+    return res.json({ ok: true, url, title: data.title, content: data.content });
+  } catch (e) {
+    console.error('/api/naver-article error:', e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+
+// ==============================
 // AI 엔드포인트들
 // ==============================
 
