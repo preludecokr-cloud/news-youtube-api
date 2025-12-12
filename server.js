@@ -98,6 +98,7 @@ async function callGemini(system, userText, model, apiKey) {
   const usedModel = model || 'gemini-1.5-flash';
   const genAI = new GoogleGenerativeAI(key);
 
+  // ✅ 여기 상수명이 틀리면 서버가 바로 터질 수 있어서 정정함
   const safetySettings = [
     {
       category: HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -108,7 +109,7 @@ async function callGemini(system, userText, model, apiKey) {
       threshold: HarmBlockThreshold.BLOCK_NONE,
     },
     {
-      category: HarmCategory.HARM_CATEGORY_SEXUAL_CONTENT,
+      category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
       threshold: HarmBlockThreshold.BLOCK_NONE,
     },
     {
@@ -133,11 +134,12 @@ async function callGemini(system, userText, model, apiKey) {
   } catch (error) {
     console.error('Gemini Error:', error.response?.data || error.message || error);
     const msg = error?.response?.data?.error?.message || error?.message || String(error);
+
     if (msg.includes('API key')) {
       throw new Error('Gemini API 키가 틀렸습니다.');
     }
-    if (msg.includes('not found') || msg.includes('404')) {
-      throw new Error('Gemini 모델을 찾을 수 없습니다.');
+    if (msg.includes('not found') || msg.includes('404') || msg.includes('does not exist')) {
+      throw new Error('Gemini 모델을 찾을 수 없습니다. (모델명/권한 확인 필요)');
     }
     throw new Error(`Gemini 오류: ${msg}`);
   }
@@ -192,21 +194,19 @@ async function scrapeNaverNews(categoryOrCode) {
   if (categoryOrCode) {
     const raw = String(categoryOrCode).trim();
     if (/^\d{3}$/.test(raw)) {
-      // 100, 101 같이 숫자 코드로 들어온 경우
       sid = raw;
     } else if (labelToCode[raw]) {
       sid = labelToCode[raw];
     }
   }
 
-  // 오늘 날짜 (네이버 리스트는 날짜까지 같이 붙여야 함)
+  // 오늘 날짜
   const now = new Date();
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
   const dateStr = `${yyyy}${mm}${dd}`;
 
-  // 🔥 옛날에 잘 됐던 패턴으로 복구: mode=LSD & mid=sec
   const url = `https://news.naver.com/main/list.naver?mode=LSD&mid=sec&sid1=${sid}&date=${dateStr}`;
   console.log('[Naver] 섹션 뉴스 요청:', { categoryOrCode, sid, url });
 
@@ -227,24 +227,20 @@ async function scrapeNaverNews(categoryOrCode) {
     const news = [];
     let rank = 1;
 
-    // 1차: 기존 리스트 구조 (type06 헤드라인 + 일반 리스트)
     const liItems = $('.newsflash_body .type06_headline li, .newsflash_body .type06 li');
 
     liItems.each((i, el) => {
-      if (rank > 100) return false; // 최대 100개만
+      if (rank > 100) return false;
 
       const $li = $(el);
       const $dl = $li.find('dl');
 
-      // dt 안의 a들 중 "텍스트 제목"용 a를 우선 선택
-      // (대부분 두 번째 dt가 제목. 이미지는 첫 번째 dt)
       let $a = $dl.find('dt a').last();
       if (!$a || !$a.attr('href')) {
         $a = $li.find('a').last();
       }
       if (!$a || !$a.attr('href')) return;
 
-      // "동영상기사" 같은 텍스트만 있는 a는 스킵
       let title = ($a.text() || $a.attr('title') || '')
         .replace(/\s+/g, ' ')
         .trim();
@@ -276,7 +272,6 @@ async function scrapeNaverNews(categoryOrCode) {
       });
     });
 
-    // 2차: 위 구조에서 하나도 못 찾은 경우 → 백업 방식
     if (news.length === 0) {
       console.log('[Naver] 기본 리스트에서 기사 0개, fallback 시도');
       const seen = new Set();
@@ -287,11 +282,7 @@ async function scrapeNaverNews(categoryOrCode) {
         const $a = $(el);
         const href = $a.attr('href') || '';
 
-        // 실제 기사 링크만 필터링
-        if (
-          !href.includes('/mnews/article') &&
-          !href.includes('read.naver')
-        ) {
+        if (!href.includes('/mnews/article') && !href.includes('read.naver')) {
           return;
         }
 
@@ -337,7 +328,6 @@ async function scrapeNaverNews(categoryOrCode) {
   }
 }
 
-
 app.get('/api/naver-news', async (req, res) => {
   try {
     const { category } = req.query;
@@ -349,9 +339,10 @@ app.get('/api/naver-news', async (req, res) => {
   }
 });
 
-
 // ==============================
-// 네이버 랭킹 뉴스
+// 네이버 랭킹 뉴스 (✅ 요청사항 반영)
+// - 조회수(views) 삭제
+// - 댓글수(commentCount) / 공감수(reactionCount) 추가
 // ==============================
 async function scrapeNaverRanking() {
   const url = 'https://news.naver.com/main/ranking/popularDay.naver';
@@ -397,22 +388,41 @@ async function scrapeNaverRanking() {
 
         const link = href.startsWith('http') ? href : `https://news.naver.com${href}`;
 
-        const viewsText = $li.find('.list_view').text().trim();
         const timeText = $li.find('.list_time').text().trim();
-        const commentText = $li.find('.list_comment').text().trim();
 
-        const views = viewsText.replace(/[^0-9,]/g, '') || null;
-        const comments = commentText.replace(/[^0-9]/g, '') || null;
+        // ✅ 댓글수: list_comment + 후보 셀렉터 추가
+        const commentText =
+          $li.find('.list_comment').text().trim() ||
+          $li.find('[class*="comment"]').first().text().trim() ||
+          $li.find('[class*="cmt"]').first().text().trim() ||
+          '';
+        const commentCount = Number((commentText || '').replace(/[^0-9]/g, '')) || 0;
 
+        // ✅ 공감수: 랭킹 목록에 표시되는 경우만 (없으면 0)
+        // 네이버가 레이아웃을 자주 바꾸니 후보를 넓게 잡음
+        const reactionText =
+          $li.find('.list_like').text().trim() ||
+          $li.find('.list_recommend').text().trim() ||
+          $li.find('.u_likeit_text').text().trim() ||
+          $li.find('[class*="like"]').first().text().trim() ||
+          $li.find('[class*="u_likeit"]').first().text().trim() ||
+          '';
+        const reactionCount = Number((reactionText || '').replace(/[^0-9]/g, '')) || 0;
+
+        // ✅ 조회수(views) 완전 제거
         news.push({
           rank: globalRank++,
           title,
           link,
           press,
           category: '랭킹',
-          views,
+          commentCount,
+          reactionCount,
+
+          // ✅ 호환용: 기존 프론트가 comments를 쓰고 있을 수 있어서 유지(값 동일)
+          comments: commentCount,
+
           time: timeText,
-          comments,
         });
       });
     });
@@ -438,11 +448,9 @@ app.get('/api/naver-ranking', async (req, res) => {
 //  - /api/naver-article?url=<기사URL>
 // ==============================
 function decodeHtmlSmart(buffer) {
-  // 1) UTF-8로 먼저 디코딩
   const utf8 = iconv.decode(buffer, 'utf-8');
   const lower = utf8.toLowerCase();
 
-  // meta charset 또는 content-type에서 euc-kr 명시 시 euc-kr로 재시도
   if (lower.includes('charset=euc-kr') || lower.includes('charset=ks_c_5601-1987')) {
     return iconv.decode(buffer, 'euc-kr');
   }
@@ -473,7 +481,6 @@ async function scrapeNaverArticle(articleUrl) {
   const html = decodeHtmlSmart(response.data);
   const $ = cheerio.load(html);
 
-  // 제목 추출 (여러 레이아웃 대응)
   const title =
     $('meta[property="og:title"]').attr('content')?.trim() ||
     $('#title_area span').first().text().trim() ||
@@ -481,10 +488,6 @@ async function scrapeNaverArticle(articleUrl) {
     $('#articleTitle').first().text().trim() ||
     '';
 
-  // 본문 추출 (여러 레이아웃 대응)
-  // - 최신: #dic_area
-  // - 일부: #newsct_article
-  // - 구형: #articleBodyContents
   const $dic = $('#dic_area');
   const $newsct = $('#newsct_article');
   const $old = $('#articleBodyContents');
@@ -500,7 +503,6 @@ async function scrapeNaverArticle(articleUrl) {
     $old.find('script, style, table, figure').remove();
     content = $old.text();
   } else {
-    // 최후 fallback: 후보 중 가장 긴 텍스트
     const candidates = [$('#contents'), $('.newsct_article'), $('article'), $('body')];
     let best = '';
     for (const $c of candidates) {
@@ -527,7 +529,6 @@ app.get('/api/naver-article', async (req, res) => {
       return res.status(400).json({ error: 'url 파라미터가 필요합니다.' });
     }
 
-    // SSRF/오용 방지: news.naver.com만 허용
     let parsed;
     try {
       parsed = new URL(url);
@@ -547,7 +548,6 @@ app.get('/api/naver-article', async (req, res) => {
     return res.status(500).json({ error: e.message });
   }
 });
-
 
 // ==============================
 // AI 엔드포인트들
